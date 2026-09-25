@@ -1,0 +1,1183 @@
+// Agenda — creator advertising marketplace
+// Core schema only. Payments, wallets, fraud signals, analytics and
+// platform integrations will be added as separate models in later steps.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  CREATOR
+  ADVERTISER
+}
+
+enum Platform {
+  TIKTOK
+  X
+  INSTAGRAM
+  YOUTUBE
+  FACEBOOK
+}
+
+enum Category {
+  FASHION
+  BEAUTY
+  FITNESS
+  TECH
+  GAMING
+  FOOD
+  TRAVEL
+  LIFESTYLE
+  COMEDY
+  MUSIC
+  SPORTS
+  EDUCATION
+  FINANCE
+  OTHER
+}
+
+// Stage 12 lifecycle:
+// DRAFT — being written; invisible to creators.
+// PUBLISHED — open for applications in the marketplace.
+// APPLICATIONS_CLOSED — no new applications; pending ones can still be
+//   accepted while slots and budget allow.
+// IN_PROGRESS — creator(s) agreed, content being produced.
+// COMPLETED / CANCELLED — terminal; history stays readable.
+enum CampaignStatus {
+  DRAFT
+  PUBLISHED
+  APPLICATIONS_CLOSED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ApplicationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+// A social account starts as PENDING_VERIFICATION and can only become VERIFIED
+// through a real platform API check (not implemented yet).
+enum SocialAccountStatus {
+  PENDING_VERIFICATION
+  VERIFIED
+  CONNECTED
+}
+
+enum PostStatus {
+  SUBMITTED
+  VERIFYING
+  VERIFIED
+  REJECTED
+}
+
+// Neutral integrity status for verification observations (Stage 9). These are
+// objective, deterministic checks on provider-reported data — NOT fraud or
+// bot detection. CLEAN passes every check; REVIEW marks a provider anomaly
+// (e.g. a cumulative counter going down) that keeps the previously established
+// high-water views intact; REJECTED mirrors the existing verifier rejection
+// semantics (ownership mismatch).
+enum ObservationIntegrityStatus {
+  CLEAN
+  REVIEW
+  REJECTED
+}
+
+// Lifecycle of a single email-verification challenge (Stage 10).
+// PENDING  — issued, not yet used; the only state a link click can consume.
+// CONSUMED — the token was used to verify an email address (single use).
+// SUPERSEDED — replaced by a newer challenge (resend) or invalidated.
+// EXPIRED  — past its expiry; kept for audit/observation before cleanup.
+enum EmailVerificationStatus {
+  PENDING
+  CONSUMED
+  SUPERSEDED
+  EXPIRED
+}
+
+// A rate-card item is either listed or not. Reactivation is an explicit
+// creator action — never an automatic side effect of editing.
+enum RateCardItemStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// Lifecycle of a campaign agreement (Stage 12). An agreement is created the
+// moment an advertiser accepts a creator's quote and freezes those terms.
+// ACTIVE   — the agreed participation is in force.
+// COMPLETED — the collaboration ran to completion (set by a later stage).
+// CANCELLED — the advertiser or creator ended the participation (later stage).
+enum AgreementStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+// How much marketplace data backs a pricing recommendation (Stage 12).
+// The guidance layer NEVER invents statistics: when there is not enough real
+// history the state is explicitly INSUFFICIENT_DATA and no range is returned.
+enum PricingDataAvailability {
+  INSUFFICIENT_DATA
+  AVAILABLE
+}
+
+// ---------------------------------------------------------------------------
+// Financial foundation (Stage 13A). All amounts in this block are integers in
+// MINOR UNITS (BigInt — kobo for NGN: ₦1,000.00 = 100000). No floats.
+//
+// Escrow note: the escrow/funding lifecycle lives directly on
+// FinancialObligation (one agreement = one obligation, so a separate Escrow
+// table would duplicate the row one-to-one and add no value today). If Stage
+// 13B+ ever needs multi-creator partial releases, the funded-amount fields can
+// be extracted into a dedicated Escrow model without touching the ledger.
+// ---------------------------------------------------------------------------
+
+// Lifecycle of a FinancialObligation (Stage 13A state machine).
+//
+//   PENDING_PAYMENT — created from an agreement; awaiting advertiser payment.
+//   PROCESSING      — a charge was initiated with the payment provider.
+//   FUNDED          — PROVIDER-VERIFIED money held by the platform. Only the
+//                     provider-verification path may set this state; clicking
+//                     "Pay" or a client report never does.
+//   SETTLEMENT_PENDING — release to the creator has been requested.
+//   RELEASED        — creator amount settled; terminal.
+//   REFUND_PENDING  — refund to the advertiser has been requested.
+//   REFUNDED        — advertiser amount returned; terminal.
+//   FAILED          — charge definitively failed; terminal (retry = new attempt record; re-fund path reuses REFUND states).
+//   DISPUTED        — freeze overlay: no automatic RELEASED/REFUNDED while set.
+//   CANCELLED       — cancelled before funding (e.g. agreement cancelled);
+//                     terminal.
+enum FinancialObligationStatus {
+  PENDING_PAYMENT
+  PROCESSING
+  FUNDED
+  SETTLEMENT_PENDING
+  RELEASED
+  REFUND_PENDING
+  REFUNDED
+  FAILED
+  DISPUTED
+  CANCELLED
+}
+
+// Double-entry direction on a ledger line. Every amount is a positive integer;
+// direction carries the sign.
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+// Why a ledger line exists (Stage 13A). CHARGE is written ONLY after the
+// provider confirms captured money — never on click or initiation.
+enum LedgerEntryType {
+  CHARGE
+  ESCROW_HOLD
+  PLATFORM_FEE
+  CREATOR_PAYOUT
+  REFUND
+  ADJUSTMENT
+  FEE_REFUND
+}
+
+// Why a FinancialEvent row exists — the append-only "why" behind every
+// obligation state change.
+enum FinancialEventType {
+  obligation_created
+  payment_initiated
+  payment_verified
+  payment_failed
+  escrow_funded
+  settlement_requested
+  settlement_completed
+  refund_requested
+  refund_completed
+  payout_created
+  payout_completed
+  payout_failed
+  payout_reversed
+  dispute_opened
+  dispute_resolved
+  admin_adjustment
+}
+
+// Where a FinancialEvent came from. SYSTEM = server-derived state change;
+// ADVERTISER/CREATOR = an authenticated user action; ADMIN = privileged
+// operations (dispute freeze/unfreeze, adjustments); PROVIDER = webhook or
+// provider-verification outcome.
+enum FinancialEventActor {
+  SYSTEM
+  ADVERTISER
+  CREATOR
+  ADMIN
+  PROVIDER
+}
+
+// Processing state of a stored provider webhook.
+enum WebhookEventStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+  SKIPPED
+}
+
+// Provider-side status of a payment/transfer transaction as last reported by
+// the provider. Kept descriptive — the obligation's own state machine is the
+// single source of truth for money movement.
+enum ProviderTransactionStatus {
+  PENDING
+  REQUIRES_ACTION
+  SUCCEEDED
+  FAILED
+  REVERSED
+  REFUNDED
+  UNKNOWN
+}
+
+// Who performs a financial state transition. Used for authorization checks
+// and FinancialEvent actor attribution.
+enum FinancialActorRole {
+  SYSTEM
+  ADVERTISER
+  CREATOR
+  ADMIN
+}
+
+// The one-to-one financial object derived from a Stage 12 CampaignAgreement.
+// Amounts are copied from the agreement ONCE, server-side, in minor units and
+// then frozen: the agreement (not the rate card, not the campaign budget) is
+// the sole source of the creator amount, and no client input can change any
+// money column on this row.
+model FinancialObligation {
+  id             String                    @id @default(uuid())
+  agreementId    String                    @unique
+  agreement      CampaignAgreement         @relation(fields: [agreementId], references: [id], onDelete: Restrict)
+
+  // Denormalized party ids from the agreement — used for access control and
+  // reporting so financial queries never have to join through the campaign.
+  campaignId     String
+  advertiserId   String
+  creatorId      String
+
+  // Frozen at creation from the agreement (Stage 12 Decimal(14,2) → BigInt
+  // minor units at the single conversion boundary in src/lib/money.ts).
+  creatorAmountMinor  BigInt
+  platformFeeMinor    BigInt
+  advertiserTotalMinor BigInt
+  currency            String
+
+  status        FinancialObligationStatus @default(PENDING_PAYMENT)
+
+  // Deterministic human-auditable reference, e.g. OBL-<agreementId-prefix>-<n>.
+  obligationRef String                    @unique
+
+  // Whether the advertiserTotal has been provider-verified as held by the
+  // platform (escrow). Only the verification path flips this. Kept separate
+  // from the state so the freeze/dispute overlay can query it cheaply.
+  escrowFunded  Boolean                   @default(false)
+
+  // Optional server-side freeze/dispute seam (Stage 13A §11). While set, the
+  // state machine refuses transitions into RELEASED / REFUNDED.
+  dispute       Boolean                   @default(false)
+  disputeReason String?
+
+  // Platform fee configuration snapshot applied at creation (null while fee
+  // config is unset — obligations cannot be created for payment then).
+  feeConfigId   String?
+
+  // Provider-agnostic reference from the provider for the active charge, when
+  // one exists. Full provider data lives in PaymentProviderTransaction.
+  providerReference String?
+
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+
+  events            FinancialEvent[]
+  providerTransactions PaymentProviderTransaction[]
+
+  @@index([status])
+  @@index([advertiserId])
+  @@index([creatorId])
+  @@index([campaignId])
+}
+
+// Append-only double-entry-style journal. Rows are NEVER updated or deleted —
+// corrections are compensating entries (ADJUSTMENT / FEE_REFUND / REFUND), so
+// financial history is immutable and auditable.
+model LedgerEntry {
+  id            String           @id @default(uuid())
+
+  // Account identity, e.g. "platform:revenue", "advertiser:<id>:payable",
+  // "creator:<id>:receivable", "provider:paystack:settlement".
+  account       String
+  direction     LedgerDirection
+  amountMinor   BigInt
+  currency      String
+  entryType     LedgerEntryType
+
+  // Context links (nullable so e.g. provider-level entries stay expressible).
+  agreementId            String?
+  financialObligationId  String?
+  financialEventId       String?
+  providerReference      String?
+
+  // Deterministic idempotency key. Unique: the same logical entry can only be
+  // written once — a retried write lands on the existing row instead.
+  idempotencyKey String          @unique
+
+  // Free-form, secret-free context (references, notes, breakdowns).
+  metadata       Json?
+
+  createdAt     DateTime         @default(now())
+
+  @@index([financialObligationId, createdAt])
+  @@index([account, createdAt])
+  @@index([entryType])
+  @@index([agreementId])
+}
+
+// Append-only record of WHY an obligation changed state. One row per logical
+// financial event; duplicates are rejected by the idempotencyKey unique
+// constraint rather than merged. No secrets are ever stored here.
+model FinancialEvent {
+  id            String               @id @default(uuid())
+  obligationId  String
+  obligation    FinancialObligation  @relation(fields: [obligationId], references: [id], onDelete: Restrict)
+  agreementId   String
+
+  eventType     FinancialEventType
+  actor         FinancialEventActor
+  // Optional concrete actor id (user id for ADVERTISER/CREATOR/ADMIN).
+  actorId       String?
+  // Subsystem that wrote the event, e.g. "webhook", "state-machine",
+  // "obligation-service".
+  source        String
+
+  // Secret-free structured context (amounts, provider refs, reasons).
+  metadata      Json?
+
+  // Deterministic idempotency key — see LedgerEntry.idempotencyKey.
+  idempotencyKey String              @unique
+
+  createdAt     DateTime             @default(now())
+
+  @@index([obligationId, createdAt])
+  @@index([agreementId])
+  @@index([eventType])
+}
+
+// Provider-side transaction snapshot. The obligation state machine is the
+// source of truth for money; this table preserves what the PROVIDER reported
+// (references, statuses, raw payloads) for verification and reconciliation —
+// provider data is evidence, never the authority.
+model PaymentProviderTransaction {
+  id                 String                    @id @default(uuid())
+  obligationId       String
+  obligation         FinancialObligation       @relation(fields: [obligationId], references: [id], onDelete: Restrict)
+
+  provider           String
+  // Provider's own reference (e.g. Paystack transaction id / access code).
+  // Unique per provider so a retried write cannot duplicate it.
+  providerReference  String
+  providerStatus     ProviderTransactionStatus @default(PENDING)
+
+  amountMinor        BigInt
+  currency           String
+
+  // Raw provider payload snapshot (secret-free) for audit/verification.
+  metadata           Json?
+
+  initiatedAt        DateTime @default(now())
+  confirmedAt        DateTime?
+  updatedAt          DateTime @updatedAt
+
+  @@unique([provider, providerReference])
+  @@index([obligationId])
+  @@index([provider, providerStatus])
+}
+
+// Stored provider webhook. Every delivery is stored BEFORE processing so
+// duplicates and out-of-order deliveries can be handled safely: the unique
+// (provider, providerEventId) pair makes a repeated delivery land on the
+// existing row (dedupe), and processing state is tracked independently.
+model WebhookEvent {
+  id               String             @id @default(uuid())
+  provider         String
+  // Provider's event identity. Nullable because a malformed delivery may not
+  // carry one; such events can still be stored for audit but are never
+  // processed (they cannot be deduplicated safely).
+  providerEventId  String?
+  eventType        String?
+  // Safely-stored raw payload. Provider signatures/secrets are NEVER stored
+  // — only verification metadata (algorithm, header presence, timestamp).
+  payload          Json
+  signatureMetadata Json?
+
+  status           WebhookEventStatus @default(RECEIVED)
+  processingError  String?
+
+  receivedAt       DateTime           @default(now())
+  processedAt      DateTime?
+
+  @@unique([provider, providerEventId])
+  @@index([status, receivedAt])
+  @@index([provider, eventType])
+}
+
+// Server-side platform fee configuration (Stage 13A §7). NO business fee
+// percentage is chosen in this stage: a configuration row must be created by
+// an explicit operational decision before any obligation can move past
+// PENDING_PAYMENT. When no ACTIVE row exists the system exposes
+// FEE_NOT_CONFIGURED and refuses live payment processing — it never invents
+// a fee and never defaults silently to 0.
+model PlatformFeeConfig {
+  id              String   @id @default(uuid())
+  // Basis-point fee taken on top of the creator amount. 1500 = 15%. Stored as
+  // an integer so fee math stays exact BigInt arithmetic.
+  feeBasisPoints  Int
+  currency        String
+  // What this configuration applies to (Stage 13B). One ACTIVE row per
+  // (currency, feeType) — funding fee, milestone advertiser fee and milestone
+  // creator commission are configured and earned independently.
+  feeType         FeeConfigType @default(AGREEMENT_FUNDING)
+  // Whether this configuration is the one in force.
+  status          FeeConfigStatus @default(ACTIVE)
+  note            String?
+  effectiveFrom   DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([currency, feeType, status])
+}
+
+enum FeeConfigStatus {
+  ACTIVE
+  RETIRED
+}
+
+// What a fee configuration applies to (Stage 13B). The 13A single-rate model
+// becomes typed so each fee is configured and earned independently:
+//   AGREEMENT_FUNDING       — fee charged on top of the agreement amount at
+//                             funding (the advertiser's upfront service fee).
+//   MILESTONE_ADVERTISER_FEE — advertiser service fee earned per COMPLETED
+//                             milestone (5% under the locked Stage 13B rules).
+//   MILESTONE_CREATOR_FEE    — creator marketplace commission earned per
+//                             COMPLETED milestone (10% under the locked rules).
+// Fees are only EARNED when the corresponding milestone settles — future/
+// cancelled milestones never generate Agenda revenue.
+enum FeeConfigType {
+  AGREEMENT_FUNDING
+  MILESTONE_ADVERTISER_FEE
+  MILESTONE_CREATOR_FEE
+}
+
+// ---------------------------------------------------------------------------
+// Milestone review & release (Stage 13B). Per-milestone lifecycle layered ON
+// TOP of the Stage 12 agreement + Stage 13A obligation — no second financial
+// system: amounts are frozen server-side from the agreement, funding is the
+// obligation's escrow, and settlement writes through the 13A ledger.
+// ---------------------------------------------------------------------------
+
+// Lifecycle of one milestone (Stage 13B state machine).
+//
+//   PENDING                  — defined from the agreement; not yet delivered.
+//   VERIFIED_PENDING_REVIEW  — platform verification passed; the advertiser
+//                              has a server-side 24h review window. NO auto
+//                              release when the window elapses.
+//   CORRECTION_REQUESTED     — advertiser asked for a fix (NOT a dispute);
+//                              review window paused.
+//   PENDING_REVERIFICATION   — creator resubmitted the correction; verification
+//                              re-runs.
+//   SUPPORT_REVIEW           — escalated to support; window paused; funds stay
+//                              provider-held. Support decides explicitly.
+//   CONFIRMED_RELEASE        — advertiser confirmed; earned amounts frozen.
+//   SETTLEMENT_PENDING       — settlement prepared from frozen amounts.
+//   RELEASED                 — creator compensation settled through the 13A
+//                              ledger (provider payout execution stays behind
+//                              the Stage 13A port); terminal.
+//   VALID_CANCELLATION       — support cancelled this milestone on documented
+//                              serious grounds; unearned fees reverse; terminal.
+//
+// Correction branch: VERIFIED_PENDING_REVIEW → CORRECTION_REQUESTED →
+// PENDING_REVERIFICATION → VERIFIED_PENDING_REVIEW (fresh 24h window).
+// Support branch: VERIFIED_PENDING_REVIEW → SUPPORT_REVIEW →
+// SETTLEMENT_PENDING / CORRECTION_REQUESTED / VALID_CANCELLATION / stay.
+// Milestones are independent: one milestone under review NEVER freezes its
+// siblings.
+enum MilestoneStatus {
+  PENDING
+  VERIFIED_PENDING_REVIEW
+  CORRECTION_REQUESTED
+  PENDING_REVERIFICATION
+  SUPPORT_REVIEW
+  CONFIRMED_RELEASE
+  SETTLEMENT_PENDING
+  RELEASED
+  VALID_CANCELLATION
+}
+
+// Explicit, auditable support decisions (Stage 13B). Every decision records
+// the support actor, timestamp, decision, reason and evidence references.
+// Support can never silently change financial amounts.
+enum SupportDecisionType {
+  RELEASE_PAYMENT
+  REQUEST_CORRECTION
+  CANCEL_AFFECTED_WORK
+  FURTHER_REVIEW
+}
+
+// Append-only milestone audit trail — the "why" behind every milestone state
+// change (submissions, verification verdicts, timer pauses/resumes, correction
+// requests, confirmations, escalations, support decisions, settlements).
+enum MilestoneEventType {
+  milestone_defined
+  post_submitted
+  verification_verified
+  verification_rejected
+  review_window_opened
+  review_timer_paused
+  review_timer_resumed
+  advertiser_delay_recorded
+  correction_requested
+  correction_submitted
+  confirmed_release
+  settlement_requested
+  released
+  escalated_support
+  support_decision
+  cancelled_valid
+  // Stage 13C — verification→milestone lifecycle wiring.
+  milestone_submission_created
+  milestone_submission_verified
+  milestone_submission_rejected
+  milestone_submission_retryable
+  milestone_review_opened
+  milestone_reverification_started
+  milestone_reverified
+  milestone_verification_failed
+  milestone_review_expired
+  milestone_missing_association
+}
+
+// One milestone of a (multi-)deliverable agreement. Created ONLY by the
+// server-side planning path from the FROZEN agreement terms — never from
+// client amounts. Each milestone carries its OWN explicit amount, currency,
+// deliverables, sequence and dates (unequal splits are the norm — e.g. a
+// ₦900,000 agreement as ₦200k/₦300k/₦400k); the per-milestone amounts must
+// reconcile EXACTLY to the agreed amount (enforced at plan time). Each
+// milestone has its own verification, review window, correction process and
+// settlement, so a problem with one milestone never freezes its siblings.
+model Milestone {
+  id          String  @id @default(uuid())
+  agreementId String
+  agreement   CampaignAgreement @relation(fields: [agreementId], references: [id], onDelete: Restrict)
+
+  // Denormalized party ids from the agreement — access control without joins.
+  campaignId   String
+  advertiserId String
+  creatorId    String
+
+  // Deterministic, auditable reference, e.g. MIL-<agreementId-prefix>-<pos>.
+  milestoneRef String @unique
+
+  // 1-based order within the agreement. Unique per agreement.
+  position    Int
+  title       String
+  // This milestone's own deliverables (may differ per milestone).
+  deliverables String?
+  // Stage 13C: how many platform posts this milestone requires (1 = the
+  // common single-post case; 3 = e.g. "three posts" in the deliverables).
+  // Frozen at plan time from the explicit milestone terms — never inferred
+  // from post counts or any client input. The milestone may enter
+  // VERIFIED_PENDING_REVIEW only when this many of its submissions are
+  // VERIFIED.
+  requiredPostCount Int @default(1)
+  // Optional per-milestone schedule (explicit milestone terms).
+  startDate   DateTime?
+  dueDate     DateTime?
+
+  // Frozen per-milestone amounts — EXPLICIT, never equal-split derived and
+  // never derived from the campaign budget. BigInt minor units, same money
+  // discipline as Stage 13A. No client input can ever write these.
+  creatorAmountMinor          BigInt
+  advertiserServiceFeeMinor   BigInt
+  creatorCommissionMinor      BigInt
+  advertiserTotalMinor        BigInt
+  currency                    String
+
+  // Fee configuration rows applied when these amounts were frozen.
+  advertiserFeeConfigId String?
+  creatorFeeConfigId    String?
+
+  status      MilestoneStatus @default(PENDING)
+
+  // Convenience pointer to the LATEST submission's post. Historical truth is
+  // MilestoneSubmission (append-only); this column is re-pointed when a new
+  // submission arrives and old submissions stay fully accessible there.
+  paidPostId  String? @unique
+  paidPost    CampaignPost? @relation("MilestonePaidPost", fields: [paidPostId], references: [id], onDelete: SetNull)
+
+  // --- Server-side 24h advertiser review window (audit facts only) ---
+  // Opened each time the milestone enters VERIFIED_PENDING_REVIEW (initial or
+  // post-correction). NEVER a client value; nothing auto-releases at the
+  // deadline — the timer exists for display and advertiser-delay auditing.
+  reviewWindowOpenedAt   DateTime?
+  reviewWindowDeadlineAt DateTime?
+  // When the window was paused (correction requested / escalation).
+  reviewPausedAt         DateTime?
+  // Accumulated time the advertiser could NOT review, for advertiser-delay
+  // accountability. Creator lateness is never derived from this.
+  totalPausedSeconds     Int       @default(0)
+
+  // --- Correction flow facts ---
+  correctionCount          Int       @default(0)
+  correctionRequestedAt    DateTime?
+  correctionRequestedBy    String?
+  correctionRequestNote    String?
+  correctionSubmittedAt    DateTime?
+  correctionSubmittedBy    String?
+
+  // --- Advertiser confirmation facts (immutable audit) ---
+  advertiserConfirmedAt  DateTime?
+  advertiserConfirmedBy  String?
+
+  // --- Support escalation + decision facts ---
+  supportEscalatedAt    DateTime?
+  supportEscalatedBy    String?
+  supportEscalationReason String?
+  supportDecidedAt      DateTime?
+  supportDecisionById   String?
+  supportDecision       SupportDecisionType?
+  supportDecisionNote   String?
+
+  // --- Settlement facts ---
+  releasedAt  DateTime?
+  cancelledAt DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  events      MilestoneEvent[]
+  submissions MilestoneSubmission[]
+
+  @@unique([agreementId, position])
+  @@index([status])
+  @@index([advertiserId])
+  @@index([creatorId])
+  @@index([agreementId])
+}
+
+// Append-only milestone audit events. Rows are never updated or deleted;
+// duplicates are rejected by the idempotencyKey unique constraint.
+model MilestoneEvent {
+  id          String  @id @default(uuid())
+  milestoneId String
+  milestone   Milestone @relation(fields: [milestoneId], references: [id], onDelete: Restrict)
+  agreementId String
+
+  eventType   MilestoneEventType
+  // ADVERTISER / CREATOR / SUPPORT / SYSTEM.
+  actor       String
+  actorId     String?
+  source      String
+  // Secret-free structured context (timer states, notes, references).
+  details     Json?
+
+  idempotencyKey String @unique
+  createdAt   DateTime @default(now())
+
+  @@index([milestoneId, createdAt])
+  @@index([agreementId])
+  @@index([eventType])
+}
+
+// Immutable per-submission history for a milestone (Stage 13B correction).
+// Every time a creator submits (or resubmits after a correction) a post for
+// a milestone, a NEW row is appended. Rows are never updated or deleted, so
+// the original submission, every correction submission, their timestamps,
+// their verification results and the correction request that caused each
+// resubmission remain inspectable forever — support sees the complete chain.
+// The Milestone.paidPostId pointer is convenience only; this table is the
+// historical record of record.
+model MilestoneSubmission {
+  id          String  @id @default(uuid())
+  milestoneId String
+  milestone   Milestone @relation(fields: [milestoneId], references: [id], onDelete: Restrict)
+  agreementId String
+
+  // 1-based sequence for this milestone: 1 = original submission,
+  // 2+ = correction resubmissions.
+  sequence    Int
+  postId      String
+  post        CampaignPost @relation("MilestoneSubmissionPost", fields: [postId], references: [id], onDelete: Restrict)
+
+  // Who submitted (user id, from the server session — never client input).
+  // Null only for system-attributed rows (e.g. worker-created originals).
+  submittedById String?
+  submittedAt   DateTime @default(now())
+
+  // Verification outcome for THIS submission. Stays SUBMITTED (pending) when
+  // the row is created; only the verification path fills it — never a client.
+  verificationStatus PostStatus @default(SUBMITTED)
+  verifiedAt         DateTime?
+
+  // The correction request that caused this resubmission (sequence > 1):
+  // the note text plus who requested it, copied from the request event so
+  // the chain is self-contained. Null on the original submission.
+  causedByCorrectionRequestNote String?
+  causedByCorrectionRequestedBy String?
+  causedByCorrectionRequestedAt DateTime?
+
+  createdAt   DateTime @default(now())
+
+  @@unique([milestoneId, sequence])
+  @@unique([postId])
+  @@index([milestoneId, submittedAt])
+  @@index([agreementId])
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         UserRole
+  // Stage 10: email verification. Null = not verified yet. Set only by the
+  // server-side token-consumption path — never from client input.
+  emailVerifiedAt DateTime?
+  // Stage 13B correction — support authorization roster. Only these user ids
+  // may act as SUPPORT (support decisions) — the same trusted seam that
+  // guards dispute freezes. Fail-closed: an empty roster authorizes nobody.
+  // It is NOT readable or writable from any client path; population is an
+  // operational act (INSERT by the operator, like PlatformFeeConfig).
+  supportRosterMember Boolean @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  creatorProfile    CreatorProfile?
+  advertiserProfile AdvertiserProfile?
+  emailVerificationTokens EmailVerificationToken[]
+}
+
+model CreatorProfile {
+  id            String    @id @default(uuid())
+  userId        String    @unique
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  username      String    @unique
+  bio           String?
+  location      String?
+  state         String?
+  country       String?
+  category      Category?
+  // Self-reported by the creator and never treated as verified. Eligibility
+  // and payouts must rely on platform-verified data instead.
+  followerCount Int       @default(0)
+  profileImage  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  applications   CampaignApplication[]
+  agreements     CampaignAgreement[]
+  posts          CampaignPost[]
+  socialAccounts SocialAccount[]
+  rateCardItems  RateCardItem[]
+}
+
+// An account a creator claims to own on a social platform. Two kinds of
+// records live in this table:
+//
+//  - CLAIMED (legacy / manual): username + profileUrl entered by the creator.
+//    Never treated as proof of identity — always PENDING_VERIFICATION.
+//  - CONNECTED: created through the official platform OAuth flow (Stage 8).
+//    platformUserId comes from the provider's identity response, never from
+//    the client, and is the key used to prove "this post belongs to this
+//    creator" during verification.
+model SocialAccount {
+  id         String   @id @default(uuid())
+  creatorId  String
+  creator    CreatorProfile @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  platform   Platform
+  username   String
+  profileUrl String
+  // Populated from the platform API during verification or the OAuth identity
+  // response. NEVER trusted from a client request.
+  platformUserId String?
+  // Populated from the platform API during verification. Never trusted from a
+  // client request.
+  followerCount  Int?
+  status     SocialAccountStatus @default(PENDING_VERIFICATION)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // --- OAuth connection fields (Stage 8; nullable because a claimed account
+  // --- has none of these and X app-only verification needs no tokens) ---
+
+  // Provider-side display handle for connected accounts, when the identity
+  // response includes one. Kept separate from the manual `username` claim.
+  platformUsername String?
+
+  // User access + refresh tokens for platforms that require user-context
+  // auth (TikTok video.query). Stored encrypted at rest with AES-256-GCM;
+  // null for platforms verified with app-only credentials (X post lookup).
+  accessToken    String?
+  refreshToken   String?
+  // Instant the access token expires (expires_in seconds after issuance).
+  accessTokenExpiresAt  DateTime?
+  // Instant the refresh token expires, when the provider reports one.
+  refreshTokenExpiresAt DateTime?
+  // Scopes actually granted by the user (comma-separated, verbatim).
+  grantedScopes  String?
+
+  // When the OAuth connection was established. Null for claimed accounts.
+  connectedAt DateTime?
+
+  // A creator cannot add the exact same account twice.
+  @@unique([creatorId, platform, username])
+  // A platform account can only ever be connected to ONE Agenda creator —
+  // enforced by the database, not just by service checks. Nullable so legacy
+  // claimed rows (platformUserId = null) never collide.
+  @@unique([platform, platformUserId])
+  @@index([creatorId])
+  @@index([creatorId, platform])
+}
+
+// One email-verification challenge (Stage 10). A challenge holds ONLY a
+// SHA-256 hash of the verification token — the raw token exists solely in
+// the email link and never touches the database or logs.
+//
+// Single use is enforced by a conditional UPDATE (consumedAt stays null in
+// the WHERE clause) so two concurrent clicks cannot both succeed — the
+// database is the concurrency arbiter, mirroring the Stage 9 idempotency
+// approach.
+model EmailVerificationToken {
+  id        String @id @default(uuid())
+  userId    String
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // hex(sha256(token)). Unique: one token string can only ever exist once,
+  // and lookups by token go through an index.
+  tokenHash String @unique
+
+  status     EmailVerificationStatus @default(PENDING)
+  // Expiry is absolute: an expired challenge can never be consumed, even if
+  // the cleanup job has not run yet (status is a cache for queries/audit).
+  expiresAt  DateTime
+  consumedAt DateTime?
+  // When this challenge was invalidated in favour of a newer one (resend).
+  supersededAt DateTime?
+
+  // IP/UA of the requester is intentionally NOT stored: least data.
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // PENDING challenges per user — at most ONE outstanding at a time.
+  @@unique([userId, status])
+  @@index([expiresAt])
+}
+
+model AdvertiserProfile {
+  id                 String   @id @default(uuid())
+  userId             String   @unique
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName        String
+  companyDescription String?
+  location           String?
+  state              String?
+  country            String?
+  website            String?
+  // External image URL for now, like the creator profile photo.
+  logoUrl            String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  campaigns    Campaign[]
+  agreements   CampaignAgreement[]
+}
+
+// ---------------------------------------------------------------------------
+// Campaigns
+// ---------------------------------------------------------------------------
+
+model Campaign {
+  id                    String         @id @default(uuid())
+  advertiserId          String
+  advertiser            AdvertiserProfile @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
+  title                 String
+  description           String
+  platform              Platform
+  category              Category
+  targetLocation        String
+  // Country-level targeting. Optional so city-only targeting keeps working.
+  targetCountry         String?
+  // Money is stored as Decimal and is always re-computed server-side.
+  budget                Decimal        @db.Decimal(14, 2)
+  currency              String         @default("NGN")
+  // Stage 12: the advertiser-set CPM rate is retired from pricing — creators
+  // quote their own fee and the accepted quote is the guaranteed amount.
+  // Kept (nullable, zero for new campaigns) so historical rows stay intact.
+  pricePerThousandViews Decimal        @db.Decimal(14, 2)
+  minimumFollowers      Int            @default(0)
+  status                CampaignStatus @default(DRAFT)
+  // Applications close at this time; no application is accepted afterwards.
+  applicationDeadline   DateTime?
+  contentRequirements   String?
+  rules                 String?
+  startDate             DateTime?
+  endDate               DateTime?
+  // When the campaign first left DRAFT. Null while still a draft.
+  publishedAt           DateTime?
+  // Stage 12: how many creators may be accepted onto this campaign. Defaults
+  // to 1; the advertiser can raise it at creation/publish time. Acceptance
+  // never exceeds this count, and accepted quotes never exceed the budget.
+  maxCreators           Int            @default(1)
+  // Free-form secondary tags beyond the primary category (Stage 12). Kept as
+  // plain strings on purpose — the enum stays the authoritative taxonomy.
+  tags                  String[]       @default([])
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  applications CampaignApplication[]
+  agreements   CampaignAgreement[]
+  posts        CampaignPost[]
+
+  @@index([status, platform])
+  @@index([status, category])
+  @@index([advertiserId])
+  @@index([targetLocation])
+}
+
+model CampaignApplication {
+  id         String            @id @default(uuid())
+  campaignId String
+  campaign   Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  creatorId  String
+  creator    CreatorProfile    @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  status     ApplicationStatus @default(PENDING)
+  message    String?
+
+  // --- Creator-controlled pricing (Stage 12) ---
+  // The fee the creator asks for the campaign deliverable. Stored as Decimal
+  // via a fixed-point string; validated server-side (positive, bounded,
+  // currency-consistent). The CREATOR controls this value — advertisers can
+  // only accept or reject it, never set it.
+  quoteAmount String
+  currency    String
+
+  // The frozen-terms record created when the advertiser accepts this
+  // application (Stage 12). One-to-one: an application is accepted once.
+  agreement CampaignAgreement?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([campaignId, creatorId])
+  @@index([creatorId])
+  @@index([status])
+}
+
+// The frozen terms of an accepted application (Stage 12). Created inside the
+// same transaction as the acceptance so there is no window where an
+// application is ACCEPTED without an agreement. Once written, the agreement
+// is never updated from client input — the agreed quote survives any later
+// campaign edit, because later stages (escrow, payouts) will settle against
+// exactly these values.
+model CampaignAgreement {
+  id           String          @id @default(uuid())
+  campaignId   String
+  campaign     Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  applicationId String         @unique
+  application  CampaignApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  advertiserId String
+  advertiser   AdvertiserProfile @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
+  creatorId    String
+  creator      CreatorProfile  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  status       AgreementStatus @default(ACTIVE)
+
+  // Frozen terms — copied from the campaign/application at acceptance time.
+  // A later campaign edit does NOT touch these fields.
+  platform     Platform
+  agreedAmount Decimal         @db.Decimal(14, 2)
+  currency     String
+  deliverables String?
+  startDate    DateTime?
+  endDate      DateTime?
+
+  acceptedAt   DateTime        @default(now())
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  // One active agreement per campaign/application pair is enforced by the
+  // unique applicationId. Concurrency safety comes from the acceptance path:
+  // the application row is flipped PENDING → ACCEPTED with a conditional
+  // UPDATE and the agreement insert sits in the same transaction, so two
+  // simultaneous accepts cannot both succeed at the application level.
+  @@unique([campaignId, creatorId, status])
+  @@index([advertiserId])
+  @@index([creatorId])
+
+  // Stage 13A: the financial object derived 1:1 from this agreement.
+  financialObligation FinancialObligation?
+
+  // Stage 13B: this agreement's milestones (one row per deliverable stage).
+  milestones Milestone[]
+}
+
+// The creator's own listed starting prices (Stage 12).
+//
+// Pricing-model rules this table encodes:
+//   - Listed rates are the CREATOR's starting references, labelled
+//     "Creator's listed rate" everywhere. They are NOT market prices and are
+//     never presented as one — Agenda has no market data at launch.
+//   - The campaign quote (CampaignApplication.quoteAmount) and the accepted
+//     price (CampaignAgreement.agreedAmount) are separate datasets. Nothing
+//     here is ever copied into them automatically, and changing a rate card
+//     never rewrites an application or an agreement (§10/§18).
+//
+// History strategy (§5): editing an ACTIVE item does not overwrite it. The
+// old row is deactivated (kept, with deactivatedAt) and a new ACTIVE row is
+// written with version = previous + 1, so past listed rates stay queryable.
+// IMPORTANT: these are LISTED-rate history points only — future pricing
+// intelligence must never treat them as transaction data.
+model RateCardItem {
+  id          String             @id @default(uuid())
+  creatorId   String
+  creator     CreatorProfile     @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  platform    Platform
+  serviceType String
+  // Fixed-point money, canonicalized server-side. Creator-controlled.
+  price       Decimal            @db.Decimal(14, 2)
+  currency    String             @default("NGN")
+  description String?
+  status      RateCardItemStatus @default(ACTIVE)
+  // Monotonic per content lineage: each structural edit of an ACTIVE item
+  // produces the next version. Deactivation/reactivation does not bump it.
+  version     Int                @default(1)
+  // Set when the item is deactivated; cleared on reactivation.
+  deactivatedAt DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  // At most one ACTIVE listed rate per (creator, platform, service type).
+  // Any number of INACTIVE rows may coexist — that is the history.
+  @@unique([creatorId, platform, serviceType, status])
+  @@index([creatorId])
+  @@index([creatorId, platform, status])
+}
+
+model CampaignPost {
+  id             String          @id @default(uuid())
+  campaignId     String
+  campaign       Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  creatorId      String
+  creator        CreatorProfile  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  platform       Platform
+  postUrl        String
+  // Caption / post text submitted with the link, for advertiser review.
+  caption        String?
+  // Free-form note from the creator at submission time.
+  creatorNote    String?
+  // Set once the post has been matched to a real platform object.
+  platformPostId String?
+  // Raw metrics as reported by the platform/user. Never used to price payouts.
+  views          Int             @default(0)
+  likes          Int             @default(0)
+  comments       Int             @default(0)
+  shares         Int             @default(0)
+  // Verified views are the only metric eligible for payout.
+  verifiedViews  Int             @default(0)
+  status         PostStatus      @default(SUBMITTED)
+  // When a verification run claimed this post. Set on SUBMITTED → VERIFYING
+  // and cleared on completion; lets a worker safely reclaim runs abandoned by
+  // a crash instead of leaving posts stuck in VERIFYING forever.
+  verificationStartedAt DateTime?
+  lastSyncedAt   DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  // Historical verification measurements (Stage 9). The metric fields above
+  // stay the latest snapshot; observations preserve every trusted measurement
+  // so repeated verifications never double-count views.
+  observations PostVerificationObservation[]
+
+  // Stage 13B: the milestone whose LATEST submission is this post (re-pointed
+  // when a newer submission arrives; old posts keep their history via
+  // MilestoneSubmission).
+  paidMilestone Milestone? @relation("MilestonePaidPost")
+  // Stage 13B correction: every milestone submission this post belongs to
+  // (append-only history — a post can belong to exactly one submission).
+  milestoneSubmissions MilestoneSubmission[] @relation("MilestoneSubmissionPost")
+
+  @@index([campaignId])
+  @@index([creatorId])
+  @@index([status])
+}
+
+// One verification observation = one trusted measurement snapshot taken by
+// the official platform verification layer (Stage 9). CampaignPost keeps its
+// raw + verified metric fields as the latest/current snapshot; this model
+// preserves the historical measurements so repeated verifications can be
+// audited without double-counting views.
+//
+// Everything in a row comes from the verifier path, never from a client
+// request. There is deliberately no creator/advertiser id here: the post is
+// the single ownership anchor.
+model PostVerificationObservation {
+  id         String   @id @default(uuid())
+  postId     String
+  post       CampaignPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  platform   Platform
+  // Platform-side post id this measurement was taken against, when the
+  // platform resolved one. Always written from verifier output, never from a
+  // client request. Nullable so pre-match observations stay representable.
+  platformPostId String?
+  observedAt DateTime
+  // Verbatim platform-reported cumulative metrics for this observation.
+  views      Int
+  likes      Int
+  comments   Int
+  shares     Int
+  // Verbatim verifier verdict for this run (eligible views after the
+  // verifier's own checks; the accounting layer applies the high-water rule).
+  verifiedViews Int
+  // Outcome of this verification run for the post.
+  verificationResult PostStatus
+  // Deterministic idempotency key: one observation per (post, platform post,
+  // observedAt) so a retried or concurrent run cannot double-record. See
+  // buildObservationKey in src/services/verified-views-accounting.ts.
+  observationKey String
+
+  // Objective integrity outcome of this observation (CLEAN / REVIEW / REJECTED).
+  integrityStatus    ObservationIntegrityStatus
+  // Which deterministic integrity checks failed, e.g. ["negative_metrics",
+  // "cumulative_decrease"]. Empty for CLEAN. Stable machine-readable ids —
+  // never free-form accusations.
+  integrityChecks    String[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Idempotency: the database is the concurrency safety net — a duplicate
+  // insert loses this race deterministically.
+  @@unique([observationKey])
+  @@index([postId, observedAt])
+  @@index([postId, integrityStatus])
+  @@index([platform])
+}

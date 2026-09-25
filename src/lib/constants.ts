@@ -1,0 +1,141 @@
+import type {
+  AgreementStatus,
+  ApplicationStatus,
+  CampaignStatus,
+  Category,
+  Platform,
+  PostStatus,
+  SocialAccountStatus,
+  UserRole,
+} from "@/types";
+
+export const APP_NAME = "Agenda";
+export const APP_TAGLINE = "Turn attention into income.";
+
+export const PLATFORM_LABELS: Record<Platform, string> = {
+  TIKTOK: "TikTok",
+  X: "X",
+  INSTAGRAM: "Instagram",
+  YOUTUBE: "YouTube",
+  FACEBOOK: "Facebook",
+};
+
+export const CATEGORY_LABELS: Record<Category, string> = {
+  FASHION: "Fashion",
+  BEAUTY: "Beauty",
+  FITNESS: "Fitness",
+  TECH: "Tech",
+  GAMING: "Gaming",
+  FOOD: "Food",
+  TRAVEL: "Travel",
+  LIFESTYLE: "Lifestyle",
+  COMEDY: "Comedy",
+  MUSIC: "Music",
+  SPORTS: "Sports",
+  EDUCATION: "Education",
+  FINANCE: "Finance",
+  OTHER: "Other",
+};
+
+export const ROLE_LABELS: Record<UserRole, string> = {
+  CREATOR: "Creator",
+  ADVERTISER: "Advertiser",
+};
+
+export const DEFAULT_CURRENCY = "NGN" as const;
+
+/**
+ * Platforms a creator can link today. Kept here (not in a validation file)
+ * because this module only uses type-only imports and is therefore safe to
+ * import from client components without pulling in the Prisma runtime.
+ */
+export const CONNECTABLE_PLATFORMS = ["TIKTOK", "X"] as const;
+export type ConnectablePlatform = (typeof CONNECTABLE_PLATFORMS)[number];
+
+/**
+ * Platforms a campaign can target today. Mirrors the creator link platforms —
+ * both TikTok and X — until Instagram/YouTube campaigns are supported.
+ */
+export const CAMPAIGN_PLATFORMS = ["TIKTOK", "X"] as const;
+export type CampaignPlatform = (typeof CAMPAIGN_PLATFORMS)[number];
+
+/**
+ * Suggestions shown in the campaign form. These are examples only — the
+ * advertiser types their own requirements and nothing is generated for them.
+ */
+export const CONTENT_REQUIREMENT_SUGGESTIONS = [
+  "Mention the brand",
+  "Use the campaign hashtag",
+  "Include the product in frame",
+  "Specific call to action",
+] as const;
+
+/**
+ * Rate-card content/service types (Stage 12). The creator picks one per
+ * listed rate; "Package" covers bundled deliverables across formats.
+ */
+export const RATE_CARD_SERVICE_TYPES = [
+  "POST",
+  "VIDEO",
+  "THREAD",
+  "PACKAGE",
+  "OTHER",
+] as const;
+export type RateCardServiceType = (typeof RATE_CARD_SERVICE_TYPES)[number];
+
+export const RATE_CARD_SERVICE_TYPE_LABELS: Record<
+  RateCardServiceType,
+  string
+> = {
+  POST: "Post",
+  VIDEO: "Video",
+  THREAD: "Thread",
+  PACKAGE: "Package",
+  OTHER: "Other",
+};
+
+export const APPLICATION_STATUS_LABELS: Record<ApplicationStatus, string> = {
+  PENDING: "Pending",
+  ACCEPTED: "Accepted",
+  REJECTED: "Rejected",
+  WITHDRAWN: "Withdrawn",
+};
+
+export const SOCIAL_ACCOUNT_STATUS_LABELS: Record<
+  SocialAccountStatus,
+  string
+> = {
+  PENDING_VERIFICATION: "Pending verification",
+  VERIFIED: "Verified",
+  CONNECTED: "Connected",
+};
+
+export const CAMPAIGN_STATUS_LABELS: Record<CampaignStatus, string> = {
+  DRAFT: "Draft",
+  PUBLISHED: "Published",
+  APPLICATIONS_CLOSED: "Applications closed",
+  IN_PROGRESS: "In progress",
+  COMPLETED: "Completed",
+  CANCELLED: "Cancelled",
+};
+
+export const AGREEMENT_STATUS_LABELS: Record<AgreementStatus, string> = {
+  ACTIVE: "Active",
+  COMPLETED: "Completed",
+  CANCELLED: "Cancelled",
+};
+
+export const POST_STATUS_LABELS: Record<PostStatus, string> = {
+  SUBMITTED: "Submitted",
+  VERIFYING: "Verifying",
+  VERIFIED: "Verified",
+  REJECTED: "Rejected",
+};
+
+/**
+ * Platforms a post can be submitted for today. Mirrors the creator link and
+ * campaign target platforms — both TikTok and X — until the other platforms
+ * are supported end to end.
+ */
+export const POST_PLATFORMS = ["TIKTOK", "X"] as const;
+export type PostPlatform = (typeof POST_PLATFORMS)[number];

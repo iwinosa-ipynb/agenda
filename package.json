@@ -1,26 +1,46 @@
 {
-  "name": "agenda-app",
+  "name": "agenda",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test --experimental-test-module-mocks src/services/verification/url-parsing.test.ts src/services/submission-rules.test.ts src/lib/cron-auth.test.ts src/lib/oauth-flow.test.ts src/lib/token-encryption.test.ts src/lib/verification-token.test.ts src/services/verification/identity.test.ts src/validation/oauth.test.ts src/services/verified-views-accounting.test.ts src/services/verified-views.service.test.ts src/lib/verified-view-display.test.ts src/services/verification/metric-mapping.omitted-fields.test.ts src/services/verified-views.service.reads.test.mts src/services/verification/tiktok-verifier.strict-id.test.mts src/services/verification/x-verifier.fields.test.mts src/services/post-verification.integration.test.mts src/services/email-verification.integration.test.mts src/services/token-lifecycle.test.mts src/services/social-account.connect.test.mts src/services/rate-card.integration.test.mts src/services/stage12-pricing-invariants.test.mts src/lib/money.test.ts src/services/payments/fee-engine.test.ts src/services/payments/obligation-state-machine.test.ts src/services/payments/stage13a-financial-foundation.test.mts src/services/payments/milestone-state-machine.test.ts src/services/payments/stage13b-milestones.test.mts src/services/payments/stage13c-verification-wiring.test.mts",
+    "postinstall": "prisma generate",
+    "prisma:generate": "prisma generate",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio"
   },
   "dependencies": {
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.4.2",
     "next": "16.3.5",
+    "next-auth": "^5.0.0-beta.32",
+    "pg": "^8.23.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "server-only": "^0.0.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
+    "prisma": "^7.10.0",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }

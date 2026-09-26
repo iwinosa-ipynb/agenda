@@ -13,7 +13,7 @@ import {
 import { formatDate, formatDateTime } from "@/lib/utils";
 import { getMilestoneEvidenceChain } from "@/services/payments/milestone.service";
 import { getMilestoneSubmissionHistory } from "@/services/payments/milestone-review.service";
-import { auth } from "@/lib/auth";
+import { requireSupport } from "@/lib/authz";
 
 export const metadata: Metadata = {
   title: "Support review",
@@ -32,18 +32,15 @@ export default async function SupportMilestoneReviewPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  // Agenda has no admin/support role architecture yet. Until Stage 14 lands
-  // the admin boundary, this view is reachable by authenticated staff
-  // sessions wired through the same seam as dispute.service's AdminActor
-  // contract: the page requires *some* authenticated session and the decision
-  // service records exactly who acted. Production deployment gates this route
-  // at the auth provider level.
-  const session = await auth();
-  const { id } = await params;
+  // Stage 14D — Support-authorization boundary. This view exposes frozen
+  // amounts, ledger state and financial events, so it is reachable ONLY by a
+  // SUPPORT session on the operator-maintained support roster. Anonymous,
+  // CREATOR and ADVERTISER sessions (and roster-less/revoked SUPPORT
+  // sessions) are redirected to /dashboard before ANY evidence is read —
+  // no deployment-level gate is required or assumed.
+  await requireSupport();
 
-  if (!session?.user?.id) {
-    notFound();
-  }
+  const { id } = await params;
 
   const evidence = await getMilestoneEvidenceChain(id);
 

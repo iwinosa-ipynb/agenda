@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { getSupportActor } from "@/lib/authz";
 import {
   transitionObligation,
   transitionEventKey,
@@ -14,11 +15,18 @@ import {
  * obligation can never settle or refund automatically. Lifting the freeze is
  * an explicit admin act too — nothing auto-resolves.
  *
- * Authorization: Agenda has no admin role yet (Stage 13A). This service is
- * therefore callable only from a future admin authorization boundary; it
- * accepts an explicit authenticated actor contract and logs who acted. When
- * the admin architecture exists (Stage 14+ per roadmap), wire requireRole
- * (or its successor) in front of these functions.
+ * Authorization (HARDENED in Stage 14D):
+ *   `assertAuthorizedAdmin` used to accept any actor with
+ *   `authenticated: true` — authentication alone. It now requires REAL
+ *   Support authorization: the caller must hold a server session with the
+ *   SUPPORT role AND be on the operator-maintained support roster (the same
+ *   fail-closed contract as the milestone support-decision path). A merely
+ *   authenticated creator/advertiser actor is refused — the flag alone can
+ *   never authorize anything.
+ *   The financial act is re-checked in the SERVICE (defense in depth): a
+ *   future caller that only forwards a session must still be a rostered
+ *   SUPPORT operator to move the freeze. `assertSupportAuthorized` also
+ *   remains available for routes/actions that want to pre-check.
  */
 
 export type DisputeActionResult =
@@ -36,16 +44,65 @@ export type AdminActor = {
   source: string;
 };
 
-function assertAuthorizedAdmin(actor: AdminActor): void {
-  if (!actor.authenticated) {
-    throw new DisputeAuthorizationError("Actor is not authenticated.");
+/**
+ * Stage 14D — the REAL Support authorization check behind every dispute
+ * action. Two requirements, BOTH enforced against server-side facts:
+ *   1. the caller's own server session carries the SUPPORT role; and
+ *   2. that same session user is on the operator-maintained support roster.
+ * Fail-closed: no session, wrong role, or absent roster → refused. An empty
+ * roster authorizes nobody.
+ */
+async function isAuthorizedSupportOperator(userId: string): Promise<boolean> {
+  if (!userId) {
+    return false;
   }
+
+  // (1) Fresh server-side identity + role (never a client-supplied value):
+  // the ONLY accepted session is the caller's own.
+  const session = await getSupportActor();
+
+  if (!session || session.id !== userId) {
+    return false;
+  }
+
+  // (2) Fresh-DB roster membership (getSupportActor already re-read it —
+  // this re-check keeps the invariant explicit and survives future edits).
+  const roster = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { supportRosterMember: true },
+  });
+
+  return roster?.supportRosterMember === true;
 }
 
 export class DisputeAuthorizationError extends Error {
-  constructor(message: string) {
+  constructor(message = "Support authorization required.") {
     super(message);
     this.name = "DisputeAuthorizationError";
+  }
+}
+
+/**
+ * Non-throwing check for callers that want a verdict (actions, tests):
+ * true only for a currently rostered SUPPORT session user.
+ */
+export async function assertSupportAuthorized(actor: AdminActor): Promise<boolean> {
+  return isAuthorizedSupportOperator(actor.userId);
+}
+
+/**
+ * HARDENED Stage 14D gate — NEVER authorizes on `authenticated === true`
+ * alone. The flag is still required (an unauthenticated actor is refused
+ * outright), but the decisive check is the real Support authorization
+ * contract: SUPPORT role + roster, verified against the server session.
+ */
+async function assertAuthorizedAdmin(actor: AdminActor): Promise<void> {
+  if (!actor.authenticated) {
+    throw new DisputeAuthorizationError("Actor is not authenticated.");
+  }
+
+  if (!(await isAuthorizedSupportOperator(actor.userId))) {
+    throw new DisputeAuthorizationError("Support authorization required.");
   }
 }
 
@@ -60,7 +117,7 @@ export async function setDisputeFreeze(
   actor: AdminActor,
   reason?: string,
 ): Promise<DisputeActionResult> {
-  assertAuthorizedAdmin(actor);
+  await assertAuthorizedAdmin(actor);
 
   const obligation = await prisma.financialObligation.findUnique({
     where: { id: obligationId },
@@ -120,9 +177,13 @@ export async function setDisputeFreeze(
  * (which enforces the freeze). Provided as the single sanctioned entry point
  * for moving a disputed obligation AFTER an admin resolution — the machine
  * itself still validates the edge.
+ *
+ * Stage 14D: the caller must be a REAL rostered SUPPORT operator (see
+ * assertAuthorizedAdmin) — previously this accepted any ADMIN-flagged
+ * request without verifying who was acting.
  */
-export function adminTransition(request: Parameters<typeof transitionObligation>[0]) {
-  assertAuthorizedAdmin({
+export async function adminTransition(request: Parameters<typeof transitionObligation>[0]) {
+  await assertAuthorizedAdmin({
     authenticated: request.actor === "ADMIN",
     userId: request.actorId ?? "",
     source: request.source,

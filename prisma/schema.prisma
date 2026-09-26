@@ -15,9 +15,14 @@ datasource db {
 // Enums
 // ---------------------------------------------------------------------------
 
+// Stage 14D: SUPPORT is the trusted internal-operator role (support review,
+// dispute handling, financial support operations). SUPPORT accounts are
+// created and authorized operationally (role + supportRosterMember roster),
+// never through the public registration flow.
 enum UserRole {
   CREATOR
   ADVERTISER
+  SUPPORT
 }
 
 enum Platform {

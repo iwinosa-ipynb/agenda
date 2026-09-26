@@ -40,6 +40,8 @@ export const CATEGORY_LABELS: Record<Category, string> = {
 export const ROLE_LABELS: Record<UserRole, string> = {
   CREATOR: "Creator",
   ADVERTISER: "Advertiser",
+  // Stage 14D — trusted internal operator (support review, dispute handling).
+  SUPPORT: "Support",
 };
 
 export const DEFAULT_CURRENCY = "NGN" as const;

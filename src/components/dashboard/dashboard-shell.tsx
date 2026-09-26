@@ -15,6 +15,9 @@ import type { UserRole } from "@/types";
 
 // Creator and advertiser navigation are deliberately separate, but several
 // destinations are shared routes that render different views per role.
+// Stage 14D: SUPPORT gets a minimal operational destination (overview +
+// milestone reviews). It is NOT an admin dashboard — no staff/role
+// management exists, and support accounts are created operationally.
 const NAV_ITEMS: Record<UserRole, DashboardNavItem[]> = {
   CREATOR: [
     { href: "/dashboard", label: "Overview", available: true },
@@ -53,6 +56,10 @@ const NAV_ITEMS: Record<UserRole, DashboardNavItem[]> = {
     },
     { href: "/dashboard/applications", label: "Applications", available: true },
     { href: "/dashboard/profile", label: "Profile", available: true },
+  ],
+  SUPPORT: [
+    { href: "/dashboard", label: "Overview", available: true },
+    { href: "/dashboard/support", label: "Support", available: true },
   ],
 };
 

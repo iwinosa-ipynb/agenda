@@ -3,6 +3,7 @@ import type {
   ApplicationStatus,
   CampaignStatus,
   Category,
+  ManagedBriefStatus,
   Platform,
   PostStatus,
   SocialAccountStatus,
@@ -166,6 +167,22 @@ export const POST_STATUS_LABELS: Record<PostStatus, string> = {
   VERIFYING: "Verifying",
   VERIFIED: "Verified",
   REJECTED: "Rejected",
+};
+
+/**
+ * Agenda Managed (V1) — the channels a managed brief can target today.
+ * Mirrors the marketplace campaign platforms (TikTok/X) so the taxonomy stays
+ * honest about what Agenda can actually run; widening the list is a code
+ * change, not a silent client option. Type-only import keeps this module safe
+ * for client components.
+ */
+export const MANAGED_BRIEF_CHANNELS = ["TIKTOK", "X"] as const;
+export type ManagedBriefChannel = (typeof MANAGED_BRIEF_CHANNELS)[number];
+
+export const MANAGED_BRIEF_STATUS_LABELS: Record<ManagedBriefStatus, string> = {
+  SUBMITTED: "Submitted",
+  IN_REVIEW: "In review",
+  CLOSED: "Closed",
 };
 
 /**

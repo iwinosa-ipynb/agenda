@@ -55,6 +55,8 @@ const NAV_ITEMS: Record<UserRole, DashboardNavItem[]> = {
       available: true,
     },
     { href: "/dashboard/applications", label: "Applications", available: true },
+    // Agenda Managed (V1): the advertiser's private briefs to Agenda.
+    { href: "/dashboard/managed", label: "Managed", available: true },
     { href: "/dashboard/profile", label: "Profile", available: true },
   ],
   SUPPORT: [

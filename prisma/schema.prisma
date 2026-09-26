@@ -1042,6 +1042,9 @@ model AdvertiserProfile {
 
   campaigns    Campaign[]
   agreements   CampaignAgreement[]
+
+  // Agenda Managed (V1): the advertiser's private managed-marketing briefs.
+  managedBriefs ManagedBrief[]
 }
 
 // ---------------------------------------------------------------------------
@@ -1313,4 +1316,63 @@ model PostVerificationObservation {
   @@index([postId, observedAt])
   @@index([postId, integrityStatus])
   @@index([platform])
+}
+
+// ---------------------------------------------------------------------------
+// Agenda Managed (V1, slice 1) — private managed-marketing briefs.
+//
+// A Managed brief is a private submission from an advertiser asking Agenda to
+// run their marketing for them. It is NOT a marketplace Campaign: it is never
+// visible to creators, never appears in public listings, and no matching,
+// outreach, negotiation, CRM, payment or agreement flow touches it in this
+// slice. Access rules:
+//   - the owning ADVERTISER (via AdvertiserProfile) can create/read their own
+//     briefs — ownership is part of every query's where-clause;
+//   - SUPPORT (the Stage 14D trusted-operator seam: role + support roster,
+//     re-read fresh from the database) may read a brief;
+//   - everyone else — including other advertisers and creators — gets nothing
+//     (fail closed).
+//
+// Budget follows the platform money discipline: an integer in MINOR UNITS
+// (BigInt — kobo for NGN), frozen at submission. It is informational only at
+// this stage; no financial object is derived from it yet.
+// ---------------------------------------------------------------------------
+
+// Lifecycle of a Managed brief. V1 only ever writes SUBMITTED; later slices
+// (support review) own the transitions, so nothing here can be pushed from
+// client input.
+enum ManagedBriefStatus {
+  SUBMITTED
+  IN_REVIEW
+  CLOSED
+}
+
+model ManagedBrief {
+  id           String            @id @default(uuid())
+  advertiserId String
+  advertiser   AdvertiserProfile @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
+
+  // What the advertiser wants to achieve (their marketing goal).
+  campaignGoal String
+  // The campaign description in the advertiser's own words.
+  description  String
+  // Informational budget at submission time, minor units (BigInt).
+  budgetMinor  BigInt
+  currency     String            @default("NGN")
+  // Who the advertiser is trying to reach (free text, V1).
+  targetAudience String
+  // Desired platforms/channels (V1 taxonomy = the Platform enum values,
+  // stored as plain strings so the channel list can widen without a
+  // migration). Validated server-side against the supported channel list.
+  targetPlatforms String[]
+  // Creator requirements/preferences (optional free text, V1).
+  creatorRequirements String?
+
+  status      ManagedBriefStatus @default(SUBMITTED)
+
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@index([advertiserId])
+  @@index([status])
 }

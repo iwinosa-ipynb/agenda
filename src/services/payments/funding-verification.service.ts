@@ -260,6 +260,16 @@ export async function verifyAndSettleFunding(
       }),
     });
 
+    // The charge reference the refund flow aims at: denormalized onto the
+    // obligation when verification settles funding (best-effort evidence
+    // hygiene — the attempt rows remain the authoritative provider record).
+    await prisma.financialObligation
+      .updateMany({
+        where: { id: obligation.id, providerReference: null },
+        data: { providerReference },
+      })
+      .catch(() => undefined);
+
     if (!transition.ok) {
       // CONCURRENT_CONFLICT: another verification/webhook already moved it —
       // re-read and report idempotently. INVALID_TRANSITION: refused.

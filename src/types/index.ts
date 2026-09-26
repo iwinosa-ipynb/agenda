@@ -5,6 +5,7 @@ import type {
   CampaignStatus,
   Category,
   CreatorProfile,
+  ManagedBriefStatus,
   Platform,
   PostStatus,
   SocialAccountStatus,
@@ -23,6 +24,7 @@ export type {
   CampaignStatus,
   Category,
   CreatorProfile,
+  ManagedBriefStatus,
   Platform,
   PostStatus,
   SocialAccount,
@@ -383,6 +385,29 @@ export type PublicRateCardItem = {
   price: string;
   currency: string;
   description: string | null;
+  updatedAt: Date;
+};
+
+// ---------------------------------------------------------------------------
+// Agenda Managed (V1) — private managed-marketing briefs
+// ---------------------------------------------------------------------------
+
+/** A managed brief as seen by its owning advertiser (list rows). */
+export type ManagedBriefSummary = {
+  id: string;
+  campaignGoal: string;
+  budgetMinor: string;
+  currency: string;
+  targetAudience: string;
+  targetPlatforms: string[];
+  status: ManagedBriefStatus;
+  createdAt: Date;
+};
+
+/** The full brief read model for the detail view (owner or support). */
+export type ManagedBriefDetail = ManagedBriefSummary & {
+  description: string;
+  creatorRequirements: string | null;
   updatedAt: Date;
 };
 

@@ -13,6 +13,8 @@ import {
   type PaymentProvider,
   type RefundRequest,
   type RefundResult,
+  type RefundStatusRequest,
+  type RefundStatusResult,
   type TransferStatusRequest,
   type TransferStatusResult,
   type VerificationRequest,
@@ -77,6 +79,14 @@ type PaystackTransferResponse = {
   status: boolean;
   message: string;
   data?: { transfer_code?: string; reference?: string; status?: string };
+};
+
+// Stage 14E — shape of the POST /refund response (status:true + queued
+// message on success; data.status moves pending → processing → processed).
+type PaystackRefundResponse = {
+  status: boolean;
+  message: string;
+  data?: { id?: number; status?: string; amount?: number; currency?: string };
 };
 
 /** Injectable HTTP boundary (tests substitute fetch; production uses global). */
@@ -626,8 +636,243 @@ export class PaystackProvider implements PaymentProvider {
   // never a silent success.
   // -------------------------------------------------------------------------
 
-  async createRefund(_request: RefundRequest): Promise<RefundResult> {
-    return { status: "failed", providerReference: null, reason: "Refunds are not implemented yet." };
+  /**
+ * Stage 14E — refund execution. The port contract predates this adapter
+ * (declared in Stage 13A) and is unchanged.
+ *
+ * Official Paystack Refund API (verified against paystack.com/docs/api/refund,
+ * September 2026):
+ *   - POST /refund — body: transaction (reference or id), amount (optional,
+ *     integer subunit), currency, customer_note, merchant_note. There is NO
+ *     client-supplied "reference" field; Paystack generates its own refund id.
+ *   - The create call is ASYNCHRONOUS: success is 200 with
+ *     {status:true, message:"Refund has been queued for processing", data
+ *     with refund status "pending"}. The refund object's status then moves
+ *     through processing to "processed" (visible via GET /refund/:id).
+ *
+ * Mapping rules (money-moving POST safety conventions, matching createPayout):
+ *   - 200/201 with status:true and a processed/failed refund status → the
+ *     DEFINITIVE outcome the provider stated ("processed" only from the
+ *     provider's own processed marker — never inferred);
+ *   - 200/201 with status:true and a queued/processing/unknown status →
+ *     "pending" (the refund is in flight provider-side, not yet definitive);
+ *   - HTTP 4xx/5xx, status:false, or a malformed body → "failed" (the
+ *     provider explicitly rejected the request — nothing was queued);
+ *   - network error / timeout → "pending" (the request may or may not have
+ *     landed provider-side: uncertainty is never converted into failure or
+ *     success).
+ */
+async createRefund(request: RefundRequest): Promise<RefundResult> {
+  let response: { status: number; body: string };
+
+  try {
+    response = await withTimeout(
+      paystackFetch(
+        this.config.baseUrl,
+        "/refund",
+        this.config.secretKey,
+        {
+          method: "POST",
+          // Only documented fields are sent. `transaction` carries the charge's
+          // Paystack transaction reference (the access code captured on the
+          // attempt row at initiation). amount: INTEGER SUBUNIT as a
+          // string-safe number: BigInt → string, never a float. The refund
+          // amount is validated against the frozen obligation by the SERVICE
+          // layer — the adapter never enlarges or shrinks it.
+          body: JSON.stringify({
+            transaction: request.providerReference,
+            amount: request.amountMinor.toString(),
+            currency: request.currency,
+            merchant_note: `Agenda refund ${request.reference}`,
+          }),
+        },
+        this.fetchImpl,
+      ),
+    );
+  } catch {
+    // Uncertainty, not failure: the request may or may not have landed
+    // provider-side, so the caller keeps the obligation REFUND_PENDING and
+    // a later retry/evidence path converges.
+    return { status: "pending", providerReference: request.reference };
+  }
+
+  let parsed: PaystackRefundResponse;
+
+  try {
+    parsed = JSON.parse(response.body) as PaystackRefundResponse;
+  } catch {
+    // A malformed envelope is an explicit error, never a success (the caller
+    // keeps the obligation REFUND_PENDING — an audited, retryable state — so
+    // this can never silently drop a refund that actually landed).
+    return {
+      status: "failed",
+      providerReference: null,
+      reason: "Paystack returned a malformed refund response.",
+    };
+  }
+
+  if (
+    (response.status !== 200 && response.status !== 201) ||
+    parsed.status !== true ||
+    typeof parsed.data?.status !== "string"
+  ) {
+    return {
+      status: "failed",
+      providerReference: null,
+      reason:
+        typeof parsed.message === "string" && parsed.message.length > 0
+          ? `Paystack rejected the refund: ${parsed.message.slice(0, 300)}`
+          : "Paystack rejected the refund.",
+    };
+  }
+
+  // Only the provider's own processed marker is definitive success.
+  if (parsed.data.status === "processed") {
+    return {
+      status: "processed",
+      providerReference: String(parsed.data.id),
+    };
+  }
+
+  if (parsed.data.status === "failed") {
+    return {
+      status: "failed",
+      providerReference: String(parsed.data.id ?? ""),
+      reason: "Paystack reports the refund as failed.",
+  };
+  }
+
+  // pending / processing / unknown provider status → queued, in flight.
+  // data.id is Paystack's refund identity: the service persists it on the
+  // attempt row so reconciliation can target GET /refund/:id later.
+  return { status: "pending", providerReference: String(parsed.data.id) };
+}
+
+  // -------------------------------------------------------------------------
+  // Refund status — GET /refund/:id, fallback GET /refund?transaction=...
+  // (Stage 14E safety fix)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Stage 14E — provider refund-status lookup.
+   *
+   * Official Paystack Refund API (paystack.com/docs/api/refund):
+   *   - GET /refund/:id — fetch one refund by Paystack's own refund id;
+   *   - GET /refund?transaction=<id> — list refunds for a transaction (used
+   *     only when no refund id was persisted, e.g. a crash lost the id).
+   *
+   * Mapping rules:
+   *   - data.status "processed" → "processed" (the provider's own marker);
+   *   - data.status "failed" → "failed";
+   *   - pending/processing/anything else → "pending" (in flight);
+   *   - HTTP/parse/network errors → "unknown" (NEVER "failed": an unanswerable
+   *     lookup must never license a re-POST of the money-moving endpoint).
+   */
+  async getRefundStatus(request: RefundStatusRequest): Promise<RefundStatusResult> {
+    const byId =
+      typeof request.providerRefundId === "string" && request.providerRefundId.length > 0
+        ? await this.fetchRefundStatus(`/refund/${encodeURIComponent(request.providerRefundId)}`)
+        : null;
+
+    if (byId === "error") {
+      // A targeted lookup EXISTS but failed: do not silently widen the search —
+      // the caller must fail closed rather than re-POST.
+      return { status: "unknown", reason: "Paystack could not be reached for the refund status." };
+    }
+
+    if (byId !== null) {
+      return byId;
+    }
+
+    // No persisted refund id: list refunds for the charge (transaction id or
+    // reference both accepted by the endpoint). Empty list → the provider
+    // confirms no refund exists (a definitive "failed"-shaped outcome: the
+    // only state in which the service may POST once).
+    const listed = await this.fetchRefundStatus(
+      `/refund?transaction=${encodeURIComponent(request.chargeReference)}`,
+    );
+
+    if (listed === "error") {
+      return { status: "unknown", reason: "Paystack could not be reached for the refund status." };
+    }
+
+    return listed;
+  }
+
+  /** Shared GET for both refund-status shapes; "error" marks transport failure. */
+  private async fetchRefundStatus(
+    path: string,
+  ): Promise<RefundStatusResult | "error"> {
+    let response: { status: number; body: string };
+
+    try {
+      response = await withTimeout(
+        paystackFetch(
+          this.config.baseUrl,
+          path,
+          this.config.secretKey,
+          { method: "GET" },
+          this.fetchImpl,
+        ),
+      );
+    } catch {
+      return "error";
+    }
+
+    let parsed: { status: boolean; message: string; data?: unknown };
+
+    try {
+      parsed = JSON.parse(response.body) as {
+        status: boolean;
+        message: string;
+        data?: unknown;
+      };
+    } catch {
+      return "error";
+    }
+
+    if (response.status !== 200 || parsed.status !== true) {
+      return "error";
+    }
+
+    // GET /refund/:id → object; GET /refund?transaction= → array (list).
+    const candidates: Array<Record<string, unknown>> = Array.isArray(parsed.data)
+      ? (parsed.data as Array<Record<string, unknown>>)
+      : parsed.data && typeof parsed.data === "object"
+        ? [parsed.data as Record<string, unknown>]
+        : [];
+
+    if (candidates.length === 0) {
+      // Provider confirms: no refund exists for this charge.
+      return { status: "failed", providerRefundId: null };
+    }
+
+    // Multiple refund objects can exist for one transaction: answer with the
+    // SAFEST aggregate — any in-flight refund wins (never re-POST past a
+    // pending), then any processed (finalizable), else failed/missing.
+    let processedId: string | null = null;
+
+    for (const refund of candidates) {
+      const rawStatus = typeof refund.status === "string" ? refund.status : "";
+      const refundId =
+        typeof refund.id === "number" && Number.isInteger(refund.id) ? String(refund.id) : null;
+
+      if (rawStatus !== "processed" && rawStatus !== "failed") {
+        // pending / processing / unknown → in flight.
+        return { status: "pending", providerRefundId: refundId };
+      }
+
+      if (rawStatus === "processed" && processedId === null) {
+        processedId = refundId;
+      }
+    }
+
+    if (processedId !== null) {
+      return { status: "processed", providerRefundId: processedId };
+    }
+
+    // Every candidate is definitively failed → no live refund.
+    return { status: "failed", providerRefundId: null };
   }
 }
 

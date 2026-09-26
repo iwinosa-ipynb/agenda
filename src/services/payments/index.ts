@@ -66,6 +66,25 @@ export type RefundResult =
   | { status: "processed"; providerReference: string }
   | { status: "failed"; providerReference: string | null; reason: string };
 
+/**
+ * Stage 14E safety fix — provider refund-status lookup.
+ *
+ * POST /refund accepts NO client reference and is therefore not idempotent:
+ * before any re-POST, the service MUST reconcile an outstanding refund
+ * through this lookup (evidence before money). "unknown" covers network/
+ * timeout/provider errors — a lookup failure is NEVER an excuse to re-POST.
+ */
+export type RefundStatusRequest = {
+  /** Paystack's own refund id, when previously persisted. */
+  providerRefundId: string | null;
+  /** The charge reference the refund was requested against. */
+  chargeReference: string;
+};
+
+export type RefundStatusResult =
+  | { status: "pending" | "processed" | "failed"; providerRefundId: string | null }
+  | { status: "unknown"; reason: string };
+
 export type PayoutRequest = {
   creatorId: string;
   amountMinor: bigint;
@@ -161,6 +180,8 @@ export interface PaymentProvider {
   // --- Stage 13B seams (declared, not implemented) ---
 
   createRefund(request: RefundRequest): Promise<RefundResult>;
+  /** Look up an outstanding refund's provider-side status (Stage 14E). */
+  getRefundStatus(request: RefundStatusRequest): Promise<RefundStatusResult>;
   createPayout(request: PayoutRequest): Promise<PayoutResult>;
   getTransferStatus(request: TransferStatusRequest): Promise<TransferStatusResult>;
   createRecipient(request: RecipientRequest): Promise<RecipientResult>;

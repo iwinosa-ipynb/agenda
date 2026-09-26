@@ -134,3 +134,35 @@ export async function getActiveRecipientForCreator(
     orderBy: { createdAt: "desc" },
   });
 }
+
+export type PayoutRecipientSummary = {
+  /** Verified account name — the only identity detail ever shown. */
+  accountName: string | null;
+  currency: string;
+  status: "ACTIVE";
+  connectedAt: Date;
+};
+
+/**
+ * Stage 14C UI read model: the creator's connected payout account, reduced
+ * to SAFE display fields. Deliberately excludes the recipient code — it is a
+ * server-managed secret-ish identifier that the UI never needs and must never
+ * echo (requirement 5: do not echo sensitive details unnecessarily).
+ */
+export async function getPayoutRecipientSummary(
+  creatorProfileId: string,
+  currency: string,
+): Promise<PayoutRecipientSummary | null> {
+  const recipient = await getActiveRecipientForCreator(creatorProfileId, currency);
+
+  if (!recipient) {
+    return null;
+  }
+
+  return {
+    accountName: recipient.accountName,
+    currency: recipient.currency,
+    status: "ACTIVE",
+    connectedAt: recipient.createdAt,
+  };
+}

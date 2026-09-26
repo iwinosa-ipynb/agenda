@@ -45,6 +45,40 @@ export const ROLE_LABELS: Record<UserRole, string> = {
 export const DEFAULT_CURRENCY = "NGN" as const;
 
 /**
+ * Curated Paystack NGN bank codes for the creator payout form (Stage 14C).
+ *
+ * DISPLAY-ONLY DATA: this list only populates the bank selector. The
+ * authoritative check happens server-side — the provider resolves the account
+ * number against the chosen bank code and refuses an account-name mismatch,
+ * so a wrong or stale code simply fails verification.
+ */
+export type PayoutBank = { code: string; name: string };
+
+export const PAYOUT_NGN_BANKS: readonly PayoutBank[] = [
+  { code: "044", name: "Access Bank" },
+  { code: "011", name: "First Bank of Nigeria" },
+  { code: "070", name: "Fidelity Bank" },
+  { code: "214", name: "FCMB" },
+  { code: "058", name: "GTBank" },
+  { code: "082", name: "Keystone Bank" },
+  { code: "50211", name: "Kuda Microfinance Bank" },
+  { code: "50515", name: "Moniepoint Microfinance Bank" },
+  { code: "999992", name: "OPay" },
+  { code: "999991", name: "PalmPay" },
+  { code: "101", name: "ProvidusBank" },
+  { code: "221", name: "Stanbic IBTC Bank" },
+  { code: "032", name: "Union Bank" },
+  { code: "033", name: "United Bank for Africa" },
+  { code: "035", name: "Wema Bank" },
+  { code: "057", name: "Zenith Bank" },
+];
+
+/** Resolves a Paystack bank code to its display name, or null when unknown. */
+export function payoutBankNameForCode(code: string): string | null {
+  return PAYOUT_NGN_BANKS.find((bank) => bank.code === code)?.name ?? null;
+}
+
+/**
  * Platforms a creator can link today. Kept here (not in a validation file)
  * because this module only uses type-only imports and is therefore safe to
  * import from client components without pulling in the Prisma runtime.

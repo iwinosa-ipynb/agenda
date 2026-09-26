@@ -36,6 +36,11 @@ const NAV_ITEMS: Record<UserRole, DashboardNavItem[]> = {
       label: "Rate card",
       available: true,
     },
+    {
+      href: "/dashboard/payouts",
+      label: "Payout account",
+      available: true,
+    },
     { href: "/dashboard/profile", label: "Profile", available: true },
   ],
   ADVERTISER: [

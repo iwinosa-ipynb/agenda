@@ -71,6 +71,12 @@ export type PayoutRequest = {
   amountMinor: bigint;
   currency: string;
   reference: string;
+  /**
+   * Stage 14C: the destination recipient code, resolved by the SERVICE layer
+   * from its own server-owned recipient storage — never from client input,
+   * never carried through a client-visible request.
+   */
+  recipientCode: string;
 };
 
 export type PayoutResult =
@@ -90,10 +96,26 @@ export type TransferStatusResult =
  * Recipient creation/verification for creator payouts (Stage 13B). Defined
  * here so the domain model exists, but NO recipient onboarding, bank-account
  * collection or KYC happens in Stage 13A.
+ *
+ * Stage 14C (approved minimal extension): the provider needs the creator's
+ * bank details to create a transfer recipient — the port now carries them.
+ * The provider adapter stays database-free: the SERVICE layer resolves the
+ * details and passes them in; a client can never reach the provider with a
+ * self-supplied recipient code because none is ever accepted as input.
  */
+export type RecipientBankAccount = {
+  /** Bank account number (digits), validated server-side before the call. */
+  accountNumber: string;
+  /** Provider bank identifier (e.g. Paystack bank_code), resolved server-side. */
+  bankCode: string;
+  /** Account-holder name as verified by the provider. */
+  accountName: string;
+};
+
 export type RecipientRequest = {
   creatorId: string;
   currency: string;
+  bankAccount: RecipientBankAccount;
 };
 
 export type RecipientResult =

@@ -399,6 +399,13 @@ model PaymentProviderTransaction {
   // Raw provider payload snapshot (secret-free) for audit/verification.
   metadata           Json?
 
+  // Optional milestone scoping for transfer attempts (Stage 14C creator
+  // payouts). Null for obligation-level attempts (charges); set for
+  // per-milestone provider transfer attempts. Evidence rows only — the
+  // logical payout lives in CreatorPayout.
+  milestoneId        String?
+  milestone          Milestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+
   initiatedAt        DateTime @default(now())
   confirmedAt        DateTime?
   updatedAt          DateTime @updatedAt
@@ -406,6 +413,7 @@ model PaymentProviderTransaction {
   @@unique([provider, providerReference])
   @@index([obligationId])
   @@index([provider, providerStatus])
+  @@index([milestoneId])
 }
 
 // Stored provider webhook. Every delivery is stored BEFORE processing so
@@ -481,6 +489,117 @@ enum FeeConfigType {
   AGREEMENT_FUNDING
   MILESTONE_ADVERTISER_FEE
   MILESTONE_CREATOR_FEE
+}
+
+// ---------------------------------------------------------------------------
+// Creator payouts (Stage 14C). The milestone rows are the per-part ledger; a
+// RELEASED milestone represents a receivable claim on the platform. This
+// block adds the payout execution layer on top — no second financial system:
+// every money movement is still expressed as LedgerEntry lines and audited by
+// FinancialEvent, and the 13A obligation state machine remains the source of
+// truth for the escrow.
+// ---------------------------------------------------------------------------
+
+// The creator's payout destination. SERVER-OWNED: a Paystack recipient code
+// is created by the server (via the provider port) from server-validated bank
+// details and stored here — a client can never supply a recipient code. Only
+// the provider's own code + the account name it verified are stored; full
+// bank-account numbers are deliberately NOT persisted (the provider holds
+// them, keeping Agenda's PCI/PII surface minimal).
+model CreatorPayoutRecipient {
+  id            String   @id @default(uuid())
+  creatorId     String
+  creator       CreatorProfile @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  provider      String
+  currency      String
+
+  // Provider's transfer-recipient code (e.g. RCP_xxx), created server-side.
+  recipientCode String
+
+  // The account name the PROVIDER resolved/verified for the account number —
+  // display/audit only. The raw account number is never stored.
+  accountName   String?
+
+  // One ACTIVE recipient per (creator, provider, currency); history via
+  // status flips, append-only (old rows are retired, never deleted).
+  status        PayoutRecipientStatus @default(ACTIVE)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([creatorId, provider, currency, status])
+  @@index([creatorId])
+}
+
+enum PayoutRecipientStatus {
+  ACTIVE
+  RETIRED
+}
+
+// The LOGICAL creator payout for one milestone — exactly one per milestone
+// (unique milestoneId), created when the milestone's transfer flow first
+// runs. Distinct from PROVIDER ATTEMPTS, which live in
+// PaymentProviderTransaction (milestoneId-scoped) and each carry their own
+// unique provider reference; a definitive failure NEVER reuses a reference —
+// the next attempt gets a new one.
+//
+// Lifecycle: PENDING (created with the first initiation) → PROCESSING (a
+// provider attempt is in flight) → PAID (provider-confirmed success; clearing
+// ledger written once) or FAILED (definitive provider failure; the
+// receivable stays open and a retry creates a NEW attempt + reference).
+// REVERSAL_RECEIVED records a provider-evidenced reversal (compensating
+// entries appended; the receivable re-opens).
+model CreatorPayout {
+  id           String   @id @default(uuid())
+
+  // Exactly one logical payout per milestone.
+  milestoneId  String   @unique
+  milestone    Milestone @relation(fields: [milestoneId], references: [id], onDelete: Restrict)
+
+  agreementId  String
+  obligationId String
+
+  // Denormalized from the milestone — the ONLY identity used to resolve the
+  // recipient; never taken from client input.
+  creatorId    String
+
+  // Frozen transfer amount: exactly the milestone's creator amount. Fees are
+  // NEVER part of this figure (they were already credited to the platform at
+  // settlement).
+  amountMinor  BigInt
+  currency     String
+
+  // Deterministic logical reference (e.g. mpo-<milestoneId>) — stable across
+  // attempts, used for idempotency of the LOGICAL payout.
+  payoutRef    String   @unique
+
+  status       CreatorPayoutStatus @default(PENDING)
+
+  // Number of provider attempts made (audit convenience; the attempts
+  // themselves are PaymentProviderTransaction rows).
+  attemptCount Int      @default(0)
+
+  // The currently in-flight or latest definitive attempt, for display/ops.
+  lastProviderReference String?
+
+  paidAt         DateTime?
+  failedAt       DateTime?
+  reversedAt     DateTime?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([status])
+  @@index([creatorId])
+}
+
+enum CreatorPayoutStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  REVERSAL_RECEIVED
 }
 
 // ---------------------------------------------------------------------------
@@ -672,6 +791,11 @@ model Milestone {
   events      MilestoneEvent[]
   submissions MilestoneSubmission[]
 
+  // Stage 14C: exactly one logical creator payout per milestone, plus the
+  // per-attempt provider transaction evidence rows.
+  payout CreatorPayout?
+  providerTransactions PaymentProviderTransaction[]
+
   @@unique([agreementId, position])
   @@index([status])
   @@index([advertiserId])
@@ -797,6 +921,10 @@ model CreatorProfile {
   posts          CampaignPost[]
   socialAccounts SocialAccount[]
   rateCardItems  RateCardItem[]
+
+  // Stage 14C: this creator's payout destinations (server-managed; recipient
+  // codes are created server-side only — never client-supplied).
+  payoutRecipients CreatorPayoutRecipient[]
 }
 
 // An account a creator claims to own on a social platform. Two kinds of

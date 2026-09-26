@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { Prisma } from "@/generated/prisma/client";
+
 import { isUniqueConstraintError } from "@/lib/prisma-errors";
 import { prisma } from "@/lib/prisma";
 import { toMinorUnits } from "@/lib/money";
@@ -49,8 +51,15 @@ function buildObligationRef(agreementId: string): string {
 
 export async function createObligationForAgreement(
   agreementId: string,
+  /**
+   * Pass a transaction client to run inside a caller-managed transaction
+   * (Stage 14A funding preparation); defaults to the module client.
+   */
+  options: { tx?: Prisma.TransactionClient } = {},
 ): Promise<ObligationCreationResult> {
-  const agreement = await prisma.campaignAgreement.findUnique({
+  const db = options.tx ?? prisma;
+
+  const agreement = await db.campaignAgreement.findUnique({
     where: { id: agreementId },
     select: {
       id: true,
@@ -109,7 +118,7 @@ export async function createObligationForAgreement(
   const obligationRef = buildObligationRef(agreementId);
 
   try {
-    const created = await prisma.financialObligation.create({
+    const created = await db.financialObligation.create({
       data: {
         agreementId,
         campaignId: agreement.campaignId,
@@ -129,7 +138,7 @@ export async function createObligationForAgreement(
     // The creation event is part of the obligation's audit trail. Written
     // after the obligation row; the event's unique key makes a retried
     // creation a no-op instead of a duplicate event.
-    await prisma.financialEvent
+    await db.financialEvent
       .create({
         data: {
           obligationId: created.id,
@@ -167,7 +176,7 @@ export async function createObligationForAgreement(
     // Concurrent creation for the same agreement: the unique constraint on
     // agreementId wins the race — serve the existing obligation.
     if (isUniqueConstraintError(error)) {
-      const existing = await prisma.financialObligation.findUnique({
+      const existing = await db.financialObligation.findUnique({
         where: { agreementId },
         select: {
           id: true,

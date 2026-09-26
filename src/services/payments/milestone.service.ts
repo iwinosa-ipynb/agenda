@@ -72,7 +72,8 @@ export type MilestonePlanResult =
         | "FEE_NOT_CONFIGURED"
         | "INVALID_AGREEMENT_AMOUNT"
         | "INVALID_MILESTONE_TERMS"
-        | "INVALID_MILESTONE_COUNT";
+        | "INVALID_MILESTONE_COUNT"
+        | "PLANNING_FAILED";
       reason: string;
     };
 
@@ -112,8 +113,15 @@ function buildMilestoneRef(agreementId: string, position: number): string {
 export async function planMilestonesForAgreement(
   agreementId: string,
   options: { milestones?: MilestonePlanInput[] } = {},
+  /**
+   * Pass a transaction client to run inside a caller-managed transaction
+   * (Stage 14A funding preparation); defaults to the module client.
+   */
+  txOptions: { tx?: Prisma.TransactionClient } = {},
 ): Promise<MilestonePlanResult> {
-  const agreement = await prisma.campaignAgreement.findUnique({
+  const db = txOptions.tx ?? prisma;
+
+  const agreement = await db.campaignAgreement.findUnique({
     where: { id: agreementId },
     select: {
       id: true,
@@ -144,7 +152,7 @@ export async function planMilestonesForAgreement(
   }
 
   // Idempotency check BEFORE any write.
-  const existing = await prisma.milestone.count({ where: { agreementId } });
+  const existing = await db.milestone.count({ where: { agreementId } });
 
   if (existing > 0) {
     return {
@@ -343,14 +351,20 @@ export async function planMilestonesForAgreement(
   }));
 
   try {
-    const created = await prisma.$transaction(
-      rows.map((data) => prisma.milestone.create({ data, select: { id: true } })),
-    );
+    // Inside a caller-managed transaction (Stage 14A funding preparation) the
+    // writes already share the caller's atomicity — and transaction clients
+    // cannot nest $transaction — so the rows are written directly. Standalone
+    // calls keep the array-form transaction.
+    const created = txOptions.tx
+      ? await Promise.all(rows.map((data) => db.milestone.create({ data, select: { id: true } })))
+      : await db.$transaction(
+          rows.map((data) => db.milestone.create({ data, select: { id: true } })),
+        );
 
     const milestoneIds = created.map((row) => row.id);
 
     // One milestone_defined event per milestone (idempotent keys).
-    await prisma.milestoneEvent.createMany({
+    await db.milestoneEvent.createMany({
       data: rows.map((data, index) => ({
         milestoneId: milestoneIds[index] as string,
         agreementId,
@@ -386,9 +400,12 @@ export async function planMilestonesForAgreement(
 
     console.error("planMilestonesForAgreement failed", error);
 
+    // An infrastructure failure is NOT a term/amount problem — mislabeling it
+    // INVALID_AGREEMENT_AMOUNT would lie about the frozen agreement. The
+    // transaction has already rolled back, so nothing was written.
     return {
       ok: false,
-      code: "INVALID_AGREEMENT_AMOUNT",
+      code: "PLANNING_FAILED",
       reason: "Could not plan the milestones.",
     };
   }
@@ -870,6 +887,17 @@ export async function settleConfirmedMilestone(
       source: "milestone-settlement",
       idempotencyKey: `milestone-${transitionEventKey(obligation.id, "settlement_completed")}:${milestoneId}`,
     }).catch(() => undefined);
+
+    // Stage 14C: kick off the creator payout for this released milestone.
+    // Fire-and-forget with full failure capture inside the payout service —
+    // a missing recipient or a provider outage must NEVER fail or roll back
+    // the settlement itself; reconciliation's catch-up sweeps unpaid
+    // RELEASED milestones until every payout has been resolved.
+    const { initiateMilestonePayout } = await import("@/services/payments/payout.service");
+
+    void initiateMilestonePayout(milestoneId).catch((payoutError) => {
+      console.error(`post-settlement payout initiation failed for ${milestoneId}`, payoutError);
+    });
 
     return {
       ok: true,

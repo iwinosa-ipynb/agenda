@@ -6,6 +6,7 @@ import {
   completeWebhookEvent,
   storeWebhookEvent,
 } from "@/services/payments/webhook-event.service";
+import { processWebhookEvent } from "@/services/payments/webhook-processing.service";
 
 /**
  * Stage 13A — POST /api/webhooks/payments/paystack (ARCHITECTURE ONLY).
@@ -97,12 +98,37 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ received: true, duplicate: true }, { status: 200 });
   }
 
-  // 6-7. Fast ack. Stage 13A interprets NO events and changes NO money state
-  // here: the event is marked processed-with-no-op so nothing is left dangling,
-  // and Stage 13B replaces this call with verification-driven transitions.
-  await completeWebhookEvent(stored.id, { ok: true });
+  // 6-7. Stage 14B: the claimed event is processed through the verification
+  // gate (server-side verifyTransaction — the payload is a hint, never the
+  // authority). Tolerant paths (unknown reference, out-of-order, mismatch,
+  // provider-unavailable) process the event WITHOUT changing money state and
+  // still ack, so Paystack does not retry forever; failures are recorded on
+  // the stored event for audit.
+  try {
+    const outcome = await processWebhookEvent(
+      stored.id,
+      verification.event.payload,
+      verification.event.eventType,
+    );
 
-  return NextResponse.json({ received: true }, { status: 202 });
+    await completeWebhookEvent(stored.id, { ok: true });
+
+    return NextResponse.json(
+      { received: true, processed: outcome.processed, note: outcome.note },
+      { status: 202 },
+    );
+  } catch (error) {
+    console.error("paystack webhook processing failed", error);
+
+    // Mark FAILED so the delivery is auditable; Paystack will retry, and the
+    // (provider, providerEventId) dedupe + claim lifecycle keep it safe.
+    await completeWebhookEvent(stored.id, {
+      ok: false,
+      error: error instanceof Error ? error.message.slice(0, 500) : "processing error",
+    });
+
+    return NextResponse.json({ error: "Webhook processing failed" }, { status: 500 });
+  }
 }
 
 function getPaymentProviderSafe() {

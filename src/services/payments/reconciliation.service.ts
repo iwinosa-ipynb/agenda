@@ -36,9 +36,15 @@ export type ReconciliationReport = {
   scannedAt: Date;
   stuckCount: number;
   candidates: StuckObligation[];
-  /** Always true in Stage 13A: no provider was contacted. */
+  /** Always true in Stage 13A: no provider was contacted for OBLIGATIONS. */
   providerChecksPerformed: false;
   note: string;
+  /** Stage 14C — payout-attempt polling results. */
+  payouts: {
+    polled: number;
+    settled: number;
+    notes: string[];
+  };
 };
 
 /** Obligations in PROCESSING for longer than this are reported as stuck. */
@@ -93,14 +99,49 @@ export async function runReconciliationScan(options?: {
     });
   }
 
+  // Stage 14C: converge in-flight creator payout attempts through provider
+  // status polling (never auto-retry, never infer failure from a timeout).
+  let payoutNotes: string[] = [];
+  let payoutsPolled = 0;
+  let payoutsSettled = 0;
+
+  try {
+    const { pollPendingPayouts, ensurePayoutsStartedForReleasedMilestones } = await import(
+      "@/services/payments/payout.service"
+    );
+
+    // First make sure every RELEASED milestone actually has its payout flow
+    // started (crash catch-up), then poll whatever is in flight.
+    await ensurePayoutsStartedForReleasedMilestones();
+
+    const payoutReport = await pollPendingPayouts({ now, thresholdMinutes });
+
+    payoutsPolled = payoutReport.polled;
+    payoutsSettled = payoutReport.settled;
+    payoutNotes = payoutReport.notes;
+  } catch (error) {
+    // Dormant provider or provider outage: the scan stays read-only.
+    payoutNotes = [
+      error instanceof Error
+        ? `payout polling skipped: ${error.message.slice(0, 200)}`
+        : "payout polling skipped",
+    ];
+  }
+
   return {
     scannedAt: now,
     stuckCount: candidates.length,
     candidates,
     providerChecksPerformed: false,
     note:
-      "Stage 13A stub: no provider contacted. Timeouts never imply failure — " +
+      "Stage 13A stub for obligations: no provider contacted. Timeouts never imply failure — " +
       "obligations stay in PROCESSING until provider verification (Stage 13B) " +
-      "resolves them to FUNDED or FAILED.",
+      "resolves them to FUNDED or FAILED. Stage 14C payout attempts ARE polled " +
+      "to a definitive outcome (success/failed/reversed) or left pending.",
+    payouts: {
+      polled: payoutsPolled,
+      settled: payoutsSettled,
+      notes: payoutNotes,
+    },
   };
 }

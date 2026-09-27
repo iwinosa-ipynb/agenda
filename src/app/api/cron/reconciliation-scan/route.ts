@@ -4,11 +4,12 @@ import { isAuthorizedCronRequest } from "@/lib/cron-auth";
 import { runReconciliationScan } from "@/services/payments/reconciliation.service";
 
 /**
- * Stage 13A — reconciliation scan endpoint (stub boundary).
+ * Reconciliation scan endpoint.
  *
- * Same authorization shape as the other cron endpoints: bearer CRON_SECRET,
- * failing closed when unset. The scan is read-only in this stage — it never
- * calls a provider and never changes financial state.
+ * Authorization: bearer CRON_SECRET, failing closed when unset. The scan
+ * re-verifies stuck PROCESSING funding obligations through the server-side
+ * verification gate (never marks FAILED from staleness) and polls in-flight
+ * payout attempts; anything the provider cannot yet resolve stays pending.
  */
 export async function GET(request: Request): Promise<Response> {
   const authorized = isAuthorizedCronRequest(

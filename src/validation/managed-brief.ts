@@ -1,7 +1,13 @@
 import { z } from "zod";
 
+import { Category } from "@/generated/prisma/client";
 import { MANAGED_BRIEF_CHANNELS } from "@/lib/constants";
 import { flattenFieldErrors } from "@/validation/errors";
+
+const categoryEnumValues = Object.values(Category) as [
+  Category,
+  ...Category[],
+];
 
 /**
  * Agenda Managed (V1) — brief submission validation.
@@ -251,3 +257,135 @@ export const managedBriefReviewActionSchema = z.object({
 export type ManagedBriefReviewActionInput = z.infer<
   typeof managedBriefReviewActionSchema
 >;
+
+// -------------------------------------------------------------------------
+// Agenda Managed (V1, slice 5) — conversion of a SELECTED candidate into a
+// DRAFT marketplace Campaign by the brief's owning advertiser.
+//
+// The form carries the fields the brief does NOT contain and the Campaign
+// model requires, reusing the existing campaign-form rules verbatim (the
+// same title/category/location/budget/dates constraints the advertiser
+// already knows from the regular campaign form). The brief's informational
+// budget is deliberately NOT used: the advertiser enters the campaign budget
+// explicitly, so it never silently becomes the hard cap enforced at
+// acceptance time.
+//
+// No quote field exists here by design — the creator still authors their own
+// quoteAmount through the normal application flow, and no rate is derived
+// from any rate card.
+// -------------------------------------------------------------------------
+
+export const managedBriefConversionSchema = z.object({
+  briefId: z.string().uuid("A valid brief id is required."),
+  candidateId: z.string().uuid("A valid candidate id is required."),
+  // Reuse the EXACT campaign-form field rules so conversion cannot create a
+  // campaign the normal flow would refuse.
+  title: z
+    .string()
+    .trim()
+    .min(3, { message: "Enter a campaign title." })
+    .max(120, { message: "Title must be 120 characters or fewer." }),
+  category: z.enum(categoryEnumValues, { message: "Choose a category." }),
+  targetLocation: z
+    .string()
+    .trim()
+    .min(2, { message: "Enter the location you're targeting." })
+    .max(100, { message: "Target location is too long." }),
+  minimumFollowers: z.coerce
+    .number({ message: "Enter a number." })
+    .int({ message: "Minimum followers must be a whole number." })
+    .min(0, { message: "Minimum followers cannot be negative." })
+    .max(1_000_000_000, { message: "Minimum followers is too large." }),
+  maxCreators: z.coerce
+    .number({ message: "Enter a number." })
+    .int({ message: "Creator slots must be a whole number." })
+    .min(1, { message: "At least one creator can be accepted." })
+    .max(50, { message: "At most 50 creator slots are supported." })
+    .default(1),
+  // The advertiser enters the campaign budget EXPLICITLY — the brief's
+  // informational budget is never silently promoted into the hard cap.
+  budget: z.coerce
+    .number({ message: "Enter a budget." })
+    .positive({ message: "Budget must be greater than zero." })
+    .max(1_000_000_000_000, { message: "Budget is too large." }),
+  contentRequirements: optionalText(
+    2000,
+    "Content requirements must be 2000 characters or fewer.",
+  ),
+  rules: optionalText(2000, "Rules must be 2000 characters or fewer."),
+});
+
+export type ManagedBriefConversionInput = z.infer<
+  typeof managedBriefConversionSchema
+>;
+
+/** Parse a date-only form input ("2026-10-31") to end-of-day UTC, or null. */
+function parseConversionDateField(value: FormDataEntryValue | null): Date | null {
+  if (typeof value !== "string" || value.trim() === "") {
+    return null;
+  }
+
+  const date = new Date(`${value.trim()}T23:59:59.999Z`);
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/**
+ * Validate a conversion payload from FormData. Cross-field date rules mirror
+ * parseCampaignForm so a converted draft obeys the same structural rules as
+ * a regular draft (deadline on/before end date, start on/before end).
+ */
+export type ManagedBriefConversionFormResult =
+  | { success: true; data: ManagedBriefConversionInput & { startDate: Date | null; endDate: Date | null; applicationDeadline: Date | null } }
+  | { success: false; fieldErrors: Record<string, string[]> };
+
+export function parseManagedBriefConversionForm(
+  raw: Record<string, FormDataEntryValue | null>,
+): ManagedBriefConversionFormResult {
+  const parsed = managedBriefConversionSchema.safeParse({
+    briefId: raw.briefId,
+    candidateId: raw.candidateId,
+    title: raw.title,
+    category: raw.category,
+    targetLocation: raw.targetLocation,
+    minimumFollowers: raw.minimumFollowers,
+    maxCreators: raw.maxCreators,
+    budget: raw.budget,
+    contentRequirements: raw.contentRequirements ?? "",
+    rules: raw.rules ?? "",
+  });
+
+  if (!parsed.success) {
+    return { success: false, fieldErrors: flattenFieldErrors(parsed.error) };
+  }
+
+  const startDate = parseConversionDateField(raw.startDate ?? null);
+  const endDate = parseConversionDateField(raw.endDate ?? null);
+  const applicationDeadline = parseConversionDateField(raw.applicationDeadline ?? null);
+  const fieldErrors: Record<string, string[]> = {};
+
+  if (startDate && endDate && startDate.getTime() > endDate.getTime()) {
+    (fieldErrors.startDate ??= []).push(
+      "Start date must be on or before the end date.",
+    );
+  }
+
+  if (
+    applicationDeadline &&
+    endDate &&
+    applicationDeadline.getTime() > endDate.getTime()
+  ) {
+    (fieldErrors.applicationDeadline ??= []).push(
+      "The application deadline must be on or before the campaign end date.",
+    );
+  }
+
+  if (Object.keys(fieldErrors).length > 0) {
+    return { success: false, fieldErrors };
+  }
+
+  return {
+    success: true,
+    data: { ...parsed.data, startDate, endDate, applicationDeadline },
+  };
+}

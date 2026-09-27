@@ -1095,6 +1095,13 @@ model Campaign {
   // Free-form secondary tags beyond the primary category (Stage 12). Kept as
   // plain strings on purpose — the enum stays the authoritative taxonomy.
   tags                  String[]       @default([])
+
+  // Agenda Managed (V1, slice 5): the SELECTED sourcing candidate this
+  // campaign was created from, when it was converted from a managed brief.
+  // Null for ordinary marketplace campaigns. Set only by the owner-advertiser
+  // conversion path; the candidate side carries the unique constraint.
+  managedBriefCandidate ManagedBriefSourcingCandidate? @relation("ManagedBriefConversion")
+
   createdAt             DateTime       @default(now())
   updatedAt             DateTime       @updatedAt
 
@@ -1449,6 +1456,15 @@ model ManagedBriefSourcingCandidate {
   // the "mark contacted" action. Support-only data; advertisers and creators
   // have no read path to it.
   outreach ManagedBriefCandidateOutreach?
+
+  // Agenda Managed (V1, slice 5): the marketplace Campaign created by the
+  // owning advertiser from this SELECTED candidate, null until conversion.
+  // One selected candidate converts at most once — the unique constraint is
+  // the database-level race arbiter (a lost concurrent conversion lands on
+  // P2002, never a second campaign). The candidate's status stays SELECTED
+  // (terminal); this nullable link is the traceability, not a new status.
+  campaignId String?  @unique
+  campaign   Campaign? @relation("ManagedBriefConversion", fields: [campaignId], references: [id], onDelete: SetNull)
 
   // Audit facts (same convention as the brief's review facts): written ONLY
   // by the server-authorized path from the session actor, never from client

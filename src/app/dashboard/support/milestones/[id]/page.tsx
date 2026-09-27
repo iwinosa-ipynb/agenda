@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { PageHeader } from "@/components/dashboard/page-header";
+import { ObligationDisputeControls } from "@/components/dashboard/support/obligation-dispute-controls";
+import { ObligationRefundControl } from "@/components/dashboard/support/obligation-refund-control";
 import { SupportDecisionControls } from "@/components/dashboard/support/support-decision-controls";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/card";
@@ -108,16 +110,50 @@ export default async function SupportMilestoneReviewPage({
       <Card className="p-6 sm:p-8">
         <h2 className="text-base font-semibold text-ink">Financial funding state</h2>
         {funding ? (
-          <dl className="mt-3 divide-y divide-line">
-            <Row label="Obligation" value={funding.id} />
-            <Row label="Status" value={funding.status} />
-            <Row label="Escrow funded" value={funding.escrowFunded ? "Yes — provider-verified" : "No"} />
-            <Row label="Dispute freeze" value={funding.dispute ? "ENGAGED" : "None"} />
-            <Row
-              label="Held total"
-              value={`${formatMajor(funding.advertiserTotalMinor, funding.currency)} ${funding.currency}`}
-            />
-          </dl>
+          <>
+            <dl className="mt-3 divide-y divide-line">
+              <Row label="Obligation" value={funding.id} />
+              <Row label="Status" value={funding.status} />
+              <Row label="Escrow funded" value={funding.escrowFunded ? "Yes — provider-verified" : "No"} />
+              <Row label="Dispute freeze" value={funding.dispute ? "ENGAGED" : "None"} />
+              <Row
+                label="Held total"
+                value={`${formatMajor(funding.advertiserTotalMinor, funding.currency)} ${funding.currency}`}
+              />
+            </dl>
+
+            {/*
+              Stage 14E closeout — Support financial controls. Eligibility is
+              derived ONLY from the server-side funding read above (never from
+              client state): the freeze overlay is togglable whenever an
+              obligation exists, while the full-refund trigger is rendered only
+              for the refund-requestable states (FUNDED, SETTLEMENT_PENDING,
+              REFUND_PENDING). RELEASED / REFUNDED / FAILED and every other
+              state never sees the refund control. The actions re-derive
+              Support authorization server-side; nothing financial is
+              accepted from the client.
+            */}
+            <section className="mt-4 border-t border-line pt-4">
+              <h3 className="text-sm font-semibold tracking-[0.14em] text-accent uppercase">
+                Dispute freeze
+              </h3>
+              <ObligationDisputeControls
+                obligationId={funding.id}
+                frozen={funding.dispute}
+              />
+            </section>
+
+            {funding.status === "FUNDED" ||
+            funding.status === "SETTLEMENT_PENDING" ||
+            funding.status === "REFUND_PENDING" ? (
+              <section className="mt-4 border-t border-line pt-4">
+                <h3 className="text-sm font-semibold tracking-[0.14em] text-accent uppercase">
+                  Refund
+                </h3>
+                <ObligationRefundControl obligationId={funding.id} />
+              </section>
+            ) : null}
+          </>
         ) : (
           <p className="mt-3 text-sm text-ink-soft">No financial obligation exists for this agreement.</p>
         )}

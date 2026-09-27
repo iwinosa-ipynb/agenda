@@ -930,6 +930,11 @@ model CreatorProfile {
   // Stage 14C: this creator's payout destinations (server-managed; recipient
   // codes are created server-side only — never client-supplied).
   payoutRecipients CreatorPayoutRecipient[]
+
+  // Agenda Managed (V1, slice 3): internal support sourcing candidates that
+  // reference this creator. Support-only data — never exposed to the creator
+  // or to advertisers through any read path.
+  sourcingCandidates ManagedBriefSourcingCandidate[]
 }
 
 // An account a creator claims to own on a social platform. Two kinds of
@@ -979,6 +984,10 @@ model SocialAccount {
 
   // When the OAuth connection was established. Null for claimed accounts.
   connectedAt DateTime?
+
+  // Agenda Managed (V1, slice 3): internal support sourcing candidates pinned
+  // to this specific account. Support-only data — never client-facing.
+  sourcingCandidates ManagedBriefSourcingCandidate[]
 
   // A creator cannot add the exact same account twice.
   @@unique([creatorId, platform, username])
@@ -1338,9 +1347,11 @@ model PostVerificationObservation {
 // this stage; no financial object is derived from it yet.
 // ---------------------------------------------------------------------------
 
-// Lifecycle of a Managed brief. V1 only ever writes SUBMITTED; later slices
-// (support review) own the transitions, so nothing here can be pushed from
-// client input.
+// Lifecycle of a Managed brief. Slice 1 only writes SUBMITTED (at creation);
+// slice 2's support-review path owns the only two transitions —
+// SUBMITTED → IN_REVIEW and IN_REVIEW → CLOSED — and every one of them is a
+// server-authorized write behind the Stage 14D seam. No client input can
+// set or change this column.
 enum ManagedBriefStatus {
   SUBMITTED
   IN_REVIEW
@@ -1370,9 +1381,134 @@ model ManagedBrief {
 
   status      ManagedBriefStatus @default(SUBMITTED)
 
+  // --- Support-review facts (slice 2) ---
+  // Audit-fact columns in the same convention as Campaign.publishedAt and
+  // Milestone.advertiserConfirmedAt/By: set ONLY by the server-authorized
+  // transition path (Stage 14D support seam) alongside the status flip, never
+  // from client input. No separate event table — the brief row carries its own
+  // timestamps; a dedicated review-audit log would be a second audit system.
+  reviewStartedAt   DateTime?
+  reviewStartedById String?
+  closedAt          DateTime?
+  closedById        String?
+
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
 
+  // Agenda Managed (V1, slice 3): internal candidates support sourced for
+  // this brief. Lives in its own table — the brief row itself gains no
+  // sourcing fields, so the slice 2 review state machine is untouched.
+  sourcingCandidates ManagedBriefSourcingCandidate[]
+
   @@index([advertiserId])
+  @@index([status])
+}
+
+// Sourcing status of one creator candidate a rostered Support operator
+// recorded for a managed brief (slice 3). Internal-only: advertisers NEVER
+// see candidate rows or notes, and creators have no read path at all.
+//
+// The candidate REFERENCES existing identity data (CreatorProfile + one of
+// its SocialAccounts) — creator identity is never duplicated here. The
+// (brief, creator, account) triple is unique at the DATABASE level, so a
+// duplicate add cannot race past the service's pre-check.
+//
+// Lifecycle: PROSPECT → CONTACTED → INTERESTED → SELECTED, with DECLINED an
+// exit from any active state. DECLINED and SELECTED are terminal. Transitions
+// are validated server-side against MANAGED_BRIEF_CANDIDATE_TRANSITIONS
+// (src/types) and every write is gated by the Stage 14D support seam.
+enum ManagedBriefCandidateStatus {
+  PROSPECT
+  CONTACTED
+  INTERESTED
+  DECLINED
+  SELECTED
+}
+
+model ManagedBriefSourcingCandidate {
+  id        String       @id @default(uuid())
+  briefId   String
+  brief     ManagedBrief @relation(fields: [briefId], references: [id], onDelete: Cascade)
+  creatorId String
+  creator   CreatorProfile @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  // The specific platform account considered. Required on purpose: it is the
+  // identity anchor for dedupe and display, and it must belong to the
+  // referenced creator (checked server-side at creation). Cascades with the
+  // account: if the creator removes the account, the candidate entry — whose
+  // identity anchor it was — goes with it. No denormalized identity copies.
+  socialAccountId String
+  socialAccount   SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+
+  status ManagedBriefCandidateStatus @default(PROSPECT)
+  // Internal note, support-eyes only. Never rendered on any advertiser- or
+  // creator-facing read model.
+  note   String?
+
+  // Agenda Managed (V1, slice 4): the internal outreach tracking record for
+  // this candidate. Exactly one per candidate (unique below) — creating it IS
+  // the "mark contacted" action. Support-only data; advertisers and creators
+  // have no read path to it.
+  outreach ManagedBriefCandidateOutreach?
+
+  // Audit facts (same convention as the brief's review facts): written ONLY
+  // by the server-authorized path from the session actor, never from client
+  // input. Plain TEXT ids, no FK — matching the brief's operator columns.
+  addedById         String
+  statusUpdatedAt   DateTime?
+  statusUpdatedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // One candidate per (brief, creator, account) — the duplicate guard is the
+  // database, so a lost race cannot create a second row.
+  @@unique([briefId, creatorId, socialAccountId])
+  @@index([briefId])
+  @@index([creatorId])
+  @@index([status])
+}
+
+// Internal outreach status of one sourcing candidate (slice 4). The RECORD is
+// created when support marks the candidate CONTACTED — no row means "not yet
+// contacted". CONTACTED → INTERESTED | DECLINED; INTERESTED and DECLINED are
+// terminal (a response was already recorded). Transitions are validated
+// server-side against MANAGED_BRIEF_OUTREACH_TRANSITIONS (src/types); the
+// client can never name a target status outside the two fixed response
+// buttons, and both are re-validated against the STORED status.
+enum ManagedBriefOutreachStatus {
+  CONTACTED
+  INTERESTED
+  DECLINED
+}
+
+// The internal outreach record for one sourcing candidate (slice 4). Purely
+// an internal tracking workflow — NO email/DM/SMS is sent by any code path in
+// this slice; support records what happened off-platform.
+//
+// Exactly one record per candidate: the unique constraint below is the
+// database-level guard against duplicate "mark contacted" actions (a lost
+// pre-check race fails here instead of creating a second record).
+model ManagedBriefCandidateOutreach {
+  id          String                        @id @default(uuid())
+  candidateId String                        @unique
+  candidate   ManagedBriefSourcingCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  status       ManagedBriefOutreachStatus @default(CONTACTED)
+  // Set once when the record is created (the "marked contacted" moment).
+  contactedAt  DateTime
+  // Set once when the creator's response is recorded; never afterwards.
+  respondedAt  DateTime?
+
+  // Optional internal note about the outreach/response — support-eyes only.
+  note         String?
+
+  // Audit facts, written ONLY by the server-authorized path from the session
+  // actor (Stage 14D seam) — never from client input.
+  contactedById String
+  respondedById String?
+
+  createdAt    DateTime                    @default(now())
+  updatedAt    DateTime                    @updatedAt
+
   @@index([status])
 }

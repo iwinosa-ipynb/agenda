@@ -3,6 +3,8 @@ import type {
   ApplicationStatus,
   CampaignStatus,
   Category,
+  ManagedBriefCandidateStatus,
+  ManagedBriefOutreachStatus,
   ManagedBriefStatus,
   Platform,
   PostStatus,
@@ -183,6 +185,51 @@ export const MANAGED_BRIEF_STATUS_LABELS: Record<ManagedBriefStatus, string> = {
   SUBMITTED: "Submitted",
   IN_REVIEW: "In review",
   CLOSED: "Closed",
+};
+
+/**
+ * Agenda Managed (V1, slice 3) — internal sourcing status of a support
+ * candidate. Support-workspace display only; advertisers never see these.
+ * Type-only import keeps this module safe for client components.
+ */
+export const MANAGED_BRIEF_CANDIDATE_STATUS_LABELS: Record<
+  ManagedBriefCandidateStatus,
+  string
+> = {
+  PROSPECT: "Prospect",
+  CONTACTED: "Contacted",
+  INTERESTED: "Interested",
+  DECLINED: "Declined",
+  SELECTED: "Selected",
+};
+
+/**
+ * Tone for candidate status badges (slice 3). Mirrors the brief status badge
+ * convention — a pure display map, no logic.
+ */
+export const MANAGED_BRIEF_CANDIDATE_STATUS_TONES: Record<
+  ManagedBriefCandidateStatus,
+  "neutral" | "accent" | "muted" | "warning" | "danger"
+> = {
+  PROSPECT: "neutral",
+  CONTACTED: "muted",
+  INTERESTED: "warning",
+  DECLINED: "danger",
+  SELECTED: "accent",
+};
+
+/**
+ * Agenda Managed (V1, slice 4) — internal outreach status of a sourcing
+ * candidate. Support-workspace display only; advertisers never see these.
+ * No row = "not contacted yet" (rendered separately in the UI).
+ */
+export const MANAGED_BRIEF_OUTREACH_STATUS_LABELS: Record<
+  ManagedBriefOutreachStatus,
+  string
+> = {
+  CONTACTED: "Contacted",
+  INTERESTED: "Interested",
+  DECLINED: "Declined",
 };
 
 /**

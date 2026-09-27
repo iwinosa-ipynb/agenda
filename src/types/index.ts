@@ -5,6 +5,8 @@ import type {
   CampaignStatus,
   Category,
   CreatorProfile,
+  ManagedBriefCandidateStatus,
+  ManagedBriefOutreachStatus,
   ManagedBriefStatus,
   Platform,
   PostStatus,
@@ -24,6 +26,9 @@ export type {
   CampaignStatus,
   Category,
   CreatorProfile,
+  ManagedBrief,
+  ManagedBriefCandidateStatus,
+  ManagedBriefOutreachStatus,
   ManagedBriefStatus,
   Platform,
   PostStatus,
@@ -409,7 +414,163 @@ export type ManagedBriefDetail = ManagedBriefSummary & {
   description: string;
   creatorRequirements: string | null;
   updatedAt: Date;
+  // Support-review audit facts (slice 2). Null until a transition runs. The
+  // owner's read model carries the timestamps but never the operator ids —
+  // attribution is internal (see ManagedBriefSupportDetail).
+  reviewStartedAt: Date | null;
+  closedAt: Date | null;
 };
+
+/**
+ * The brief detail as seen by a rostered Support operator (slice 2): the
+ * owner's detail plus the operator attribution ids for each review
+ * transition. The ids are internal — they never appear on any
+ * advertiser-facing read model.
+ */
+export type ManagedBriefSupportDetail = ManagedBriefDetail & {
+  reviewStartedById: string | null;
+  closedById: string | null;
+};
+
+/**
+ * A managed brief as seen by a rostered Support operator in the review queue
+ * (slice 2). The operator id is included for attribution display — it is
+ * always resolved from the server session behind the Stage 14D seam, never
+ * from client input.
+ */
+export type ManagedBriefSupportSummary = ManagedBriefSummary & {
+  advertiserCompanyName: string;
+  reviewStartedAt: Date | null;
+  closedAt: Date | null;
+  reviewStartedById: string | null;
+  closedById: string | null;
+};
+
+/** One sourcing candidate as displayed in the Support workspace (slice 3). */
+export type ManagedBriefCandidateSummary = {
+  id: string;
+  status: ManagedBriefCandidateStatus;
+  // Internal, support-eyes-only. Never rendered on any advertiser- or
+  // creator-facing read model.
+  note: string | null;
+  addedById: string;
+  statusUpdatedAt: Date | null;
+  statusUpdatedById: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  // Referenced identity — always resolved from the live CreatorProfile /
+  // SocialAccount rows, never duplicated into the candidate record.
+  creator: {
+    profileId: string;
+    name: string;
+    username: string;
+    category: Category | null;
+    // Self-reported by the creator; labelled as such in the UI.
+    followerCount: number;
+  };
+  account: {
+    accountId: string;
+    platform: Platform;
+    username: string;
+    profileUrl: string;
+    status: SocialAccountStatus;
+    // Platform-reported when verification/OAuth has run; null otherwise.
+    followerCount: number | null;
+  };
+  // Internal outreach tracking (slice 4). Null while the candidate has not
+  // been marked contacted yet. Support-only — never exposed to advertisers
+  // or creators through any read model.
+  outreach: {
+    id: string;
+    status: ManagedBriefOutreachStatus;
+    contactedAt: Date;
+    respondedAt: Date | null;
+    note: string | null;
+    contactedById: string;
+    respondedById: string | null;
+  } | null;
+};
+
+/**
+ * An existing platform account support can pick from when adding a candidate
+ * (slice 3). Resolved from real CreatorProfile/SocialAccount rows only — the
+ * add path never accepts typed-in identity data.
+ */
+export type ManagedBriefCandidateAccountOption = {
+  profileId: string;
+  creatorName: string;
+  username: string;
+  accountId: string;
+  platform: Platform;
+  accountUsername: string;
+  category: Category | null;
+};
+
+/**
+ * Valid candidate status transitions (slice 3). The linear happy path plus
+ * DECLINED as an exit from any active state. DECLINED and SELECTED are
+ * terminal — nothing reopens them. The service enforces this map server-side;
+ * the client only names the CURRENT candidate, never the next status.
+ */
+export const MANAGED_BRIEF_CANDIDATE_TRANSITIONS = {
+  PROSPECT: ["CONTACTED", "DECLINED"],
+  CONTACTED: ["INTERESTED", "DECLINED"],
+  INTERESTED: ["SELECTED", "DECLINED"],
+  DECLINED: [],
+  SELECTED: [],
+} as const satisfies Record<
+  ManagedBriefCandidateStatus,
+  readonly ManagedBriefCandidateStatus[]
+>;
+
+/**
+ * Valid support-review status transitions (slice 2). SUBMITTED → IN_REVIEW →
+ * CLOSED; CLOSED is terminal and nothing reopens a closed brief.
+ */
+export const MANAGED_BRIEF_REVIEW_TRANSITIONS = {
+  SUBMITTED: ["IN_REVIEW"],
+  IN_REVIEW: ["CLOSED"],
+  CLOSED: [],
+} as const satisfies Record<ManagedBriefStatus, readonly ManagedBriefStatus[]>;
+
+/**
+ * The candidate payload when a fresh add or status change must re-render the
+ * workspace — kept minimal; the page refetches the full list. briefId lets
+ * the action layer revalidate exactly the affected brief page.
+ */
+export type ManagedBriefCandidateMutationResult = {
+  candidateId: string;
+  briefId: string;
+  status: ManagedBriefCandidateStatus;
+};
+
+/**
+ * The outreach payload when marking contacted / recording a response must
+ * re-render the workspace — same shape rules as the candidate result.
+ */
+export type ManagedBriefOutreachMutationResult = {
+  outreachId: string;
+  candidateId: string;
+  briefId: string;
+  status: ManagedBriefOutreachStatus;
+};
+
+/**
+ * Valid OUTREACH transitions (slice 4). CONTACTED is written once at record
+ * creation; the creator's response moves the record to INTERESTED or
+ * DECLINED. Both are terminal — a response can be recorded exactly once.
+ * The service enforces this map server-side against the STORED status; the
+ * client only presses one of two fixed response buttons and never names a
+ * raw status in a free-form field.
+ */
+export const MANAGED_BRIEF_OUTREACH_TRANSITIONS = {
+  CONTACTED: ["INTERESTED", "DECLINED"],
+  INTERESTED: [],
+  DECLINED: [],
+} as const satisfies Record<
+  ManagedBriefOutreachStatus,
+  readonly ManagedBriefOutreachStatus[]
+>;
 
 /** Shape returned by any server action / route handler. */
 export type ActionResult<T = undefined> =

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { Card } from "@/components/ui/card";
 import { requireSupport } from "@/lib/authz";
 
@@ -27,6 +29,27 @@ export default async function SupportDashboardPage() {
           access ends immediately.
         </p>
       </div>
+
+      <Card className="p-6 sm:p-8">
+        <h2 className="text-base font-semibold tracking-[-0.01em] text-ink">
+          <Link href="/dashboard/support/managed" className="hover:text-accent hover:underline">
+            Managed briefs
+          </Link>
+        </h2>
+        <p className="mt-1 text-sm leading-relaxed text-ink-soft">
+          Private briefs advertisers submitted to the Agenda Managed team.
+          Review the full brief, advance its status: submitted → in review →
+          closed, and work an internal candidate list with off-platform
+          outreach tracking (log contact, record the creator&apos;s
+          response). Every transition is timestamped and attributed
+          server-side; candidates, outreach records and notes are visible to
+          support only.
+        </p>
+        <p className="mt-3 text-xs leading-relaxed text-ink-faint">
+          Advertisers keep full control of their own briefs — this queue never
+          edits brief content, and briefs never appear in the marketplace.
+        </p>
+      </Card>
 
       <Card className="p-6 sm:p-8">
         <h2 className="text-base font-semibold tracking-[-0.01em] text-ink">

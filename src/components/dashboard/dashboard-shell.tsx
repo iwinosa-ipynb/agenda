@@ -62,6 +62,12 @@ const NAV_ITEMS: Record<UserRole, DashboardNavItem[]> = {
   SUPPORT: [
     { href: "/dashboard", label: "Overview", available: true },
     { href: "/dashboard/support", label: "Support", available: true },
+    // Agenda Managed (V1 slice 2): support review of submitted briefs.
+    {
+      href: "/dashboard/support/managed",
+      label: "Managed briefs",
+      available: true,
+    },
   ],
 };
 

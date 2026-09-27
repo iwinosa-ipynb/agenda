@@ -133,3 +133,121 @@ export function parseManagedBriefForm(
 
   return { success: true, data: parsed.data };
 }
+
+/**
+ * Agenda Managed (V1, slice 3) — support sourcing candidates.
+ *
+ * MINIMAL by the same rule as the slice 2 review schema: the client may
+ * identify WHICH brief/candidate to act on plus the (optional) internal note,
+ * and nothing more. There is NO status field in any of these schemas — the
+ * transition target is decided entirely by the server's state machine from
+ * the candidate's stored status, so no client input can push a candidate into
+ * any state, valid or invalid. Creator identity is never typed in: the add
+ * schema takes existing record ids, and the SERVICE verifies that the account
+ * actually belongs to the creator. Authorization never touches this file: it
+ * is enforced by the service/action layer against the server session +
+ * roster.
+ */
+
+export const managedBriefCandidateAddSchema = z.object({
+  briefId: z.string().uuid("A valid brief id is required."),
+  // Existing records only — identity data is referenced, never duplicated.
+  creatorProfileId: z.string().uuid("Choose a creator."),
+  socialAccountId: z.string().uuid("Choose one of the creator's accounts."),
+  note: optionalText(1000, "Note must be 1000 characters or fewer."),
+});
+
+export type ManagedBriefCandidateAddInput = z.infer<
+  typeof managedBriefCandidateAddSchema
+>;
+
+/**
+ * Status change: identify the candidate and nothing else. The next status is
+ * derived server-side from the stored status via
+ * MANAGED_BRIEF_CANDIDATE_TRANSITIONS — same pattern as the slice 2 brief
+ * review (client names the object, server owns the state machine).
+ */
+export const managedBriefCandidateStatusActionSchema = z.object({
+  candidateId: z.string().uuid("A valid candidate id is required."),
+});
+
+export type ManagedBriefCandidateStatusActionInput = z.infer<
+  typeof managedBriefCandidateStatusActionSchema
+>;
+
+/** Note update: the only writable content field, internal to support. */
+export const managedBriefCandidateNoteSchema = z.object({
+  candidateId: z.string().uuid("A valid candidate id is required."),
+  note: optionalText(1000, "Note must be 1000 characters or fewer."),
+});
+
+export type ManagedBriefCandidateNoteInput = z.infer<
+  typeof managedBriefCandidateNoteSchema
+>;
+
+export const managedBriefCandidateRemoveSchema = z.object({
+  candidateId: z.string().uuid("A valid candidate id is required."),
+});
+
+export type ManagedBriefCandidateRemoveInput = z.infer<
+  typeof managedBriefCandidateRemoveSchema
+>;
+
+// -------------------------------------------------------------------------
+// Agenda Managed (V1, slice 4) — internal outreach tracking.
+//
+// Same minimal rule: forms identify the candidate (and carry an optional
+// internal note). There is deliberately NO response-status field in the
+// response schema — INTERESTED/DECLINED are two separate fixed actions, each
+// resolved server-side, so a client can never name a raw target status that
+// the server would then have to trust or re-interpret. Authorization never
+// touches this file.
+// -------------------------------------------------------------------------
+
+/** Mark a candidate contacted: identify the candidate, nothing else. */
+export const managedBriefOutreachContactSchema = z.object({
+  candidateId: z.string().uuid("A valid candidate id is required."),
+  note: optionalText(1000, "Note must be 1000 characters or fewer."),
+});
+
+export type ManagedBriefOutreachContactInput = z.infer<
+  typeof managedBriefOutreachContactSchema
+>;
+
+/** Record a creator response: identify the candidate, nothing else. */
+export const managedBriefOutreachResponseSchema = z.object({
+  candidateId: z.string().uuid("A valid candidate id is required."),
+  note: optionalText(1000, "Note must be 1000 characters or fewer."),
+});
+
+export type ManagedBriefOutreachResponseInput = z.infer<
+  typeof managedBriefOutreachResponseSchema
+>;
+
+/** Update the outreach record's internal note only. */
+export const managedBriefOutreachNoteSchema = z.object({
+  candidateId: z.string().uuid("A valid candidate id is required."),
+  note: optionalText(1000, "Note must be 1000 characters or fewer."),
+});
+
+export type ManagedBriefOutreachNoteInput = z.infer<
+  typeof managedBriefOutreachNoteSchema
+>;
+
+/**
+ * Agenda Managed (V1, slice 2) — support review validation.
+ *
+ * MINIMAL by the same rule as the Stage 13B schemas: the client may identify
+ * WHICH brief to act on and nothing more. There is no status field here —
+ * the transition target is decided entirely by the server's state machine
+ * from the brief's stored status, so no client input can push a brief into
+ * any state, valid or invalid. Authorization never touches this file: it is
+ * enforced by the service/action layer against the server session + roster.
+ */
+export const managedBriefReviewActionSchema = z.object({
+  briefId: z.string().uuid("A valid brief id is required."),
+});
+
+export type ManagedBriefReviewActionInput = z.infer<
+  typeof managedBriefReviewActionSchema
+>;

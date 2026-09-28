@@ -24,6 +24,11 @@ const NAV_ITEMS: Record<UserRole, DashboardNavItem[]> = {
     { href: "/dashboard/campaigns", label: "Campaigns", available: true },
     { href: "/dashboard/applications", label: "Applications", available: true },
     {
+      href: "/dashboard/opportunities",
+      label: "Opportunities",
+      available: true,
+    },
+    {
       href: "/dashboard/active-campaigns",
       label: "Active campaigns",
       available: true,

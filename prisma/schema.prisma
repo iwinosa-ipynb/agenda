@@ -935,6 +935,11 @@ model CreatorProfile {
   // reference this creator. Support-only data — never exposed to the creator
   // or to advertisers through any read path.
   sourcingCandidates ManagedBriefSourcingCandidate[]
+
+  // Creator Opportunity Matching (V1): relevance records linking this
+  // creator to published campaigns. Server-generated only; read/written
+  // through services/notifications.
+  opportunityNotifications CreatorOpportunityNotification[]
 }
 
 // An account a creator claims to own on a social platform. Two kinds of
@@ -1109,6 +1114,10 @@ model Campaign {
   agreements   CampaignAgreement[]
   posts        CampaignPost[]
 
+  // Creator Opportunity Matching (V1): relevance records generated when the
+  // campaign was published. Server-generated only; creators read their own.
+  opportunityNotifications CreatorOpportunityNotification[]
+
   @@index([status, platform])
   @@index([status, category])
   @@index([advertiserId])
@@ -1142,6 +1151,42 @@ model CampaignApplication {
   @@unique([campaignId, creatorId])
   @@index([creatorId])
   @@index([status])
+}
+
+// Creator Opportunity Matching + Notifications (V1).
+//
+// Matching is a RELEVANCE system, not eligibility: an opportunity record
+// means "this published campaign shares attributes with this creator", never
+// "this creator can apply" — `applyToCampaign` remains the single
+// authoritative application gate and matching NEVER applies anyone. One row
+// per (campaign, creator): the DB unique constraint is the dedupe arbiter so
+// a re-run or raced publication can never double-notify.
+//
+// Visibility discipline: rows are created ONLY by the server-side
+// publication flow, for PUBLISHED campaigns that satisfy the marketplace's
+// own open-listing visibility rules (see services/notifications). A creator
+// therefore never receives an opportunity for a campaign they could not
+// legally see, and no client input can create one.
+model CreatorOpportunityNotification {
+  id         String @id @default(uuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  creatorId  String
+  creator    CreatorProfile @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  // Relevance reasons live only in the notification record (derived from
+  // live profile/campaign data at match time) — they are never profile data
+  // and never part of eligibility.
+  reasons String[]
+
+  readAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // The dedupe arbiter: one opportunity per campaign + creator, ever.
+  @@unique([campaignId, creatorId])
+  @@index([creatorId, readAt])
 }
 
 // The frozen terms of an accepted application (Stage 12). Created inside the

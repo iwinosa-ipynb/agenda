@@ -17,6 +17,9 @@ import {
   parseCampaignForm,
 } from "@/validation/advertiser";
 import { reviewApplicationSchema } from "@/validation/campaign";
+import {
+  notifyMatchingCreatorsForCampaign,
+} from "@/services/notifications.service";
 import { flattenFieldErrors } from "@/validation/errors";
 
 // ---------------------------------------------------------------------------
@@ -117,6 +120,13 @@ export async function createCampaignAction(
     return result;
   }
 
+  // Creator Opportunity Matching (V1): publication is the trigger. Server-
+  // side only — the campaign id comes from the server's own write result.
+  // Matching never fails or delays the publication (fail-open inside).
+  if (intent === "publish") {
+    await notifyMatchingCreatorsForCampaign(result.data.campaignId);
+  }
+
   revalidatePath("/dashboard/campaigns");
   revalidatePath("/dashboard");
 
@@ -190,6 +200,10 @@ export async function publishCampaignAction(
   if (!result.success) {
     return result;
   }
+
+  // Creator Opportunity Matching (V1): DRAFT → PUBLISHED is the trigger.
+  // Server-side only; fail-open so matching never breaks publication.
+  await notifyMatchingCreatorsForCampaign(campaignId);
 
   revalidateCampaign(campaignId);
 

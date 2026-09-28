@@ -3,15 +3,15 @@
   "crons": [
     {
       "path": "/api/cron/verify-posts",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 6 * * *"
     },
     {
       "path": "/api/cron/milestone-sweep",
-      "schedule": "*/15 * * * *"
+      "schedule": "30 6 * * *"
     },
     {
       "path": "/api/cron/reconciliation-scan",
-      "schedule": "0 * * * *"
+      "schedule": "0 7 * * *"
     },
     {
       "path": "/api/cron/cleanup-verification-tokens",

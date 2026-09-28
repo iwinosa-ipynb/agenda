@@ -489,6 +489,11 @@ export type ManagedBriefCandidateSummary = {
     contactedById: string;
     respondedById: string | null;
   } | null;
+  // Slice 5 traceability: the marketplace Campaign created from this
+  // SELECTED candidate by the owning advertiser, null while unconverted.
+  // Support-only visibility — the candidate's status stays SELECTED
+  // (terminal); this link is the conversion record, not a new status.
+  campaignId: string | null;
 };
 
 /**

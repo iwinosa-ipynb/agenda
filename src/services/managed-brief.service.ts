@@ -396,6 +396,11 @@ const candidateSummarySelect = {
   statusUpdatedById: true,
   createdAt: true,
   updatedAt: true,
+  // Slice 5 traceability: the marketplace campaign this candidate became,
+  // null while unconverted. Support-only visibility into the outcome of the
+  // sourcing pipeline — the candidate's status stays SELECTED (terminal);
+  // this link IS the conversion record, not a new status.
+  campaignId: true,
   creator: {
     select: {
       id: true,
@@ -446,6 +451,7 @@ function toCandidateSummary(row: CandidateSummaryRow): ManagedBriefCandidateSumm
     statusUpdatedById: row.statusUpdatedById,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    campaignId: row.campaignId,
     creator: {
       profileId: row.creator.id,
       name: row.creator.user.name,

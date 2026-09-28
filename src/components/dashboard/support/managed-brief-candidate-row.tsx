@@ -50,6 +50,7 @@ export type OutreachView = {
  */
 export function ManagedBriefCandidateRow({
   candidateId,
+  campaignId,
   status,
   note,
   statusUpdatedAt,
@@ -66,6 +67,8 @@ export function ManagedBriefCandidateRow({
   outreach,
 }: {
   candidateId: string;
+  /** The campaign this candidate became (slice 5 conversion); null while unconverted. */
+  campaignId: string | null;
   status: ManagedBriefCandidateStatus;
   note: string | null;
   statusUpdatedAt: Date | null;
@@ -219,6 +222,17 @@ export function ManagedBriefCandidateRow({
               ? `Status updated ${statusUpdatedAt.toLocaleDateString("en-GB")}${statusUpdatedById ? ` · by ${statusUpdatedById}` : ""}`
               : "Status never advanced"}
           </p>
+          {campaignId ? (
+            <p className="text-xs text-ink-soft">
+              Converted into a campaign:{" "}
+              <a
+                href={`/dashboard/campaigns/${campaignId}`}
+                className="font-medium text-accent underline-offset-4 hover:underline"
+              >
+                Open the campaign
+              </a>
+            </p>
+          ) : null}
         </div>
 
         <div className="flex shrink-0 items-center gap-2">

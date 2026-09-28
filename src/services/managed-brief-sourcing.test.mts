@@ -45,6 +45,8 @@ type CandidateRow = {
   statusUpdatedById: string | null;
   createdAt: Date;
   updatedAt: Date;
+  // Slice 5 traceability, now exposed by the Support read model.
+  campaignId: string | null;
 };
 
 type BriefRow = {
@@ -145,6 +147,7 @@ const prismaStub = {
         addedById: String(data.addedById),
         statusUpdatedAt: (data.statusUpdatedAt as Date | null) ?? null,
         statusUpdatedById: (data.statusUpdatedById as string | null) ?? null,
+        campaignId: null,
         createdAt: now,
         updatedAt: now,
       };
@@ -488,6 +491,7 @@ function seedCandidate(overrides: Partial<CandidateRow> = {}): CandidateRow {
     statusUpdatedById: null,
     createdAt: now,
     updatedAt: now,
+    campaignId: null,
     ...overrides,
   };
 
@@ -843,9 +847,12 @@ describe("Agenda Managed V1 — support sourcing candidates", () => {
       const row = candidateRow(added.candidateId);
 
       // The row carries foreign keys, not copies of usernames/urls/counts.
+      // campaignId is the slice 5 conversion link (null until the owning
+      // advertiser converts the selected candidate).
       assert.deepEqual(Object.keys(row).sort(), [
         "addedById",
         "briefId",
+        "campaignId",
         "createdAt",
         "creatorId",
         "id",
@@ -1472,6 +1479,78 @@ describe("Agenda Managed V1 — support sourcing candidates", () => {
         ),
         /Support authorization required/u,
       );
+    });
+
+    it("an unconverted candidate remains unconverted in the support read model", async () => {
+      const brief = seedBrief();
+      seedCreatorWithAccounts();
+      seedCandidate({ briefId: brief.id, status: "SELECTED" });
+
+      asRosteredSupport();
+
+      const [candidate] =
+        await service.listManagedBriefCandidatesForSupport(brief.id);
+
+      assert.ok(candidate);
+      assert.equal(candidate.campaignId, null);
+    });
+
+    it("a converted candidate exposes its campaignId in the support read model", async () => {
+      const brief = seedBrief();
+      seedCreatorWithAccounts();
+      seedCandidate({
+        briefId: brief.id,
+        status: "SELECTED",
+        campaignId: "camp-converted-1",
+      });
+
+      asRosteredSupport();
+
+      const [candidate] =
+        await service.listManagedBriefCandidatesForSupport(brief.id);
+
+      assert.ok(candidate);
+      assert.equal(candidate.campaignId, "camp-converted-1");
+      // SELECTED stays terminal — the link is the conversion record, not a
+      // new status.
+      assert.equal(candidate.status, "SELECTED");
+    });
+
+    it("authorization/roster behavior is unchanged for the conversion field", async () => {
+      const brief = seedBrief();
+      seedCreatorWithAccounts();
+      seedCandidate({
+        briefId: brief.id,
+        status: "SELECTED",
+        campaignId: "camp-converted-2",
+      });
+
+      // Every non-support session still reads nothing at all — so the new
+      // field cannot leak through any of them.
+      const attempts: Array<["CREATOR" | "ADVERTISER" | "SUPPORT" | null, string | null]> = [
+        ["ADVERTISER", ADVERTISER_A_USER],
+        ["CREATOR", CREATOR_USER],
+        [null, null],
+        ["SUPPORT", SUPPORT_USER], // role without roster
+      ];
+
+      for (const [role, userId] of attempts) {
+        asSession(role, userId);
+
+        const list =
+          await service.listManagedBriefCandidatesForSupport(brief.id);
+
+        assert.equal(list.length, 0);
+      }
+
+      // A rostered support session still reads the converted candidate.
+      asRosteredSupport();
+
+      const [candidate] =
+        await service.listManagedBriefCandidatesForSupport(brief.id);
+
+      assert.ok(candidate);
+      assert.equal(candidate.campaignId, "camp-converted-2");
     });
   });
 });

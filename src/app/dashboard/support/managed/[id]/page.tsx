@@ -153,6 +153,7 @@ export default async function SupportManagedBriefReviewPage({
                 <ManagedBriefCandidateRow
                   key={candidate.id}
                   candidateId={candidate.id}
+                  campaignId={candidate.campaignId}
                   status={candidate.status}
                   note={candidate.note}
                   statusUpdatedAt={candidate.statusUpdatedAt}

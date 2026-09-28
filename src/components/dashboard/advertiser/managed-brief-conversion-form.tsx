@@ -5,7 +5,10 @@ import Link from "next/link";
 
 import { convertSelectedCandidateAction } from "@/app/dashboard/_actions/managed-brief";
 import { Button } from "@/components/ui/button";
-import { Category } from "@/generated/prisma/client";
+// Browser-safe enum-only module (no Prisma runtime / node:module). Importing
+// the barrel here pulled the full Prisma runtime into the client graph and
+// panicked Turbopack's browser chunking on this page.
+import { Category } from "@/generated/prisma/enums";
 import type { ActionResult } from "@/types";
 
 const CATEGORY_OPTIONS = Object.values(Category);

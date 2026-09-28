@@ -135,7 +135,7 @@ export default async function ManagedBriefDetailPage({
                 Open the campaign
               </Link>
             </p>
-          ) : (
+          ) : selectedCandidate.accountEligible ? (
             <ManagedBriefConversionForm
               briefId={brief.id}
               candidateId={selectedCandidate.candidateId}
@@ -144,6 +144,16 @@ export default async function ManagedBriefDetailPage({
               accountUsername={selectedCandidate.accountUsername}
               defaultTitle={brief.campaignGoal.slice(0, 120)}
             />
+          ) : (
+            <p className="rounded-lg border border-line bg-surface-muted px-3.5 py-3 text-sm text-ink-soft" role="status">
+              This creator&apos;s {selectedCandidate.accountPlatform} account ({
+                selectedCandidate.accountUsername
+              }){" "}
+              isn&apos;t connected yet, so the campaign can&apos;t be created from
+              this selection — the creator applies with their own fixed quote
+              through that account. Once they connect it, this form becomes
+              available.
+            </p>
           )}
         </Card>
       ) : null}

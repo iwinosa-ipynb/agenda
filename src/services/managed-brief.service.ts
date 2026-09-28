@@ -3,6 +3,10 @@ import "server-only";
 import type { Prisma } from "@/generated/prisma/client";
 
 import { getSupportActor } from "@/lib/authz";
+import { MANAGED_BRIEF_CHANNELS } from "@/lib/constants";
+import {
+  isManagedBriefSourcingAccountEligible,
+} from "@/lib/managed-brief-eligibility";
 import { isSupportedCurrency, toMinorUnits } from "@/lib/money";
 import { prisma } from "@/lib/prisma";
 import {
@@ -516,6 +520,16 @@ export async function listManagedBriefCandidateAccountOptionsForSupport(): Promi
       category: true,
       user: { select: { name: true } },
       socialAccounts: {
+        // Sourcing eligibility lives IN the query, not in the UI: Support is
+        // only ever offered accounts the marketplace can actually use —
+        // connectable platforms (TIKTOK/X) that are OAuth-connected
+        // (platformUserId present). A claimed-only or unsupported-platform
+        // account can never back a convertible candidate, so it is never a
+        // valid choice here. (The write path re-checks the same rule.)
+        where: {
+          platform: { in: [...MANAGED_BRIEF_CHANNELS] },
+          platformUserId: { not: null },
+        },
         orderBy: [{ platform: "asc" }, { username: "asc" }],
         select: {
           id: true,
@@ -552,6 +566,15 @@ export async function listManagedBriefCandidateAccountOptionsForSupport(): Promi
  * form. Creator identity data is never duplicated: the candidate row stores
  * references.
  *
+ * Sourcing eligibility (enforced HERE, not only in the picker UI): the
+ * pinned account must be on a connectable platform (TIKTOK/X) AND be
+ * OAuth-connected (platformUserId present). Conversion later inherits this
+ * account's platform into the Campaign, and the marketplace application
+ * gate requires a connected account on that platform — pinning an unusable
+ * account would hand the selected creator a campaign they can never apply
+ * to. The same rule is enforced at the SELECTED transition and again at
+ * conversion, so this boundary is one layer of defense, not the only one.
+ *
  * Duplicates (same brief + creator + account) are rejected by the DATABASE
  * unique constraint — the service pre-check gives a friendly message and the
  * constraint catches a lost race. Added/updated attribution comes ONLY from
@@ -582,16 +605,28 @@ export async function addManagedBriefCandidateForSupport(
   }
 
   // The account must be a real record AND belong to the claimed creator —
-  // the pairing is verified, never assumed from client input.
+  // the pairing is verified, never assumed from client input. Its
+  // eligibility fields are read in the same query so the sourcing rule is
+  // evaluated against the STORED row, never against form data.
   const account = await prisma.socialAccount.findFirst({
     where: { id: input.socialAccountId, creatorId: input.creatorProfileId },
-    select: { id: true },
+    select: { id: true, platform: true, platformUserId: true },
   });
 
   if (!account) {
     return {
       success: false,
       error: "That account does not belong to the selected creator.",
+    };
+  }
+
+  // A managed-brief candidate must be pinnable to an account the creator
+  // can actually apply with later (connectable platform + OAuth-connected).
+  if (!isManagedBriefSourcingAccountEligible(account)) {
+    return {
+      success: false,
+      error:
+        "That account can't be used for sourcing — the creator must connect it (TikTok or X) before it can be a candidate.",
     };
   }
 
@@ -651,9 +686,18 @@ export async function transitionManagedBriefCandidateForSupport(
     return { success: false, error: "Support authorization required." };
   }
 
+  // The account's eligibility fields ride along so the SELECTED gate can be
+  // evaluated against the STORED account in the same read.
   const candidate = await prisma.managedBriefSourcingCandidate.findFirst({
     where: { id: candidateId },
-    select: { id: true, status: true, briefId: true },
+    select: {
+      id: true,
+      status: true,
+      briefId: true,
+      socialAccount: {
+        select: { platform: true, platformUserId: true },
+      },
+    },
   });
 
   if (!candidate) {
@@ -666,6 +710,23 @@ export async function transitionManagedBriefCandidateForSupport(
     return {
       success: false,
       error: `A ${candidate.status.toLowerCase()} candidate cannot change status.`,
+    };
+  }
+
+  // SELECTED is the boundary that makes a candidate convertible: a candidate
+  // whose pinned account cannot satisfy the marketplace application gate
+  // (connectable platform + OAuth-connected) must never reach it. This
+  // catches legacy rows pinned before the rule existed. Nothing about the
+  // pinned account is rewritten here — if the creator later connects the
+  // account (platformUserId becomes non-null), the transition simply works.
+  if (
+    next === "SELECTED" &&
+    !isManagedBriefSourcingAccountEligible(candidate.socialAccount)
+  ) {
+    return {
+      success: false,
+      error:
+        "This candidate's pinned account is not connected (TikTok or X), so they can't be selected. Have the creator connect the account first.",
     };
   }
 

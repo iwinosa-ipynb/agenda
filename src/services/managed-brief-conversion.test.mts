@@ -114,6 +114,15 @@ const prismaStub = {
         enriched.socialAccount = structuredClone(account);
       }
 
+      // The read path selects the candidate's creator relation — resolve it
+      // from the stored row shape (the DB guarantees a CreatorProfile via
+      // FK; the stub mirrors that join).
+      enriched.creator = enriched.creator ?? {
+        username: `creator-${String(row.creatorId).slice(0, 8)}`,
+        category: "FOOD",
+        user: { name: `Creator ${row.creatorId}` },
+      };
+
       return enriched;
     },
     update: async (args: { where: { id: string }; data: Record<string, unknown> }) => {
@@ -278,6 +287,10 @@ function addAccount(overrides: Record<string, unknown> = {}): Row {
     id: uuid(),
     platform: "TIKTOK",
     username: "snackqueen",
+    // Eligible by default: OAuth-connected (the sourcing rule the conversion
+    // boundary re-checks). Tests pass platformUserId: null to model legacy
+    // claimed-only accounts.
+    platformUserId: `platform-${nextId}`,
     ...overrides,
   };
 
@@ -291,7 +304,9 @@ function addCandidate(brief: Row, overrides: Record<string, unknown> = {}): Row 
     id: uuid(),
     briefId: brief.id,
     creatorId: uuid(),
-    socialAccountId: uuid(),
+    // Must reference a real seeded account row: the DB enforces this FK and
+    // the conversion boundary now reads the pinned account's eligibility.
+    socialAccountId: db.socialAccount[0]?.id ?? uuid(),
     status: "SELECTED",
     campaignId: null,
     note: null,
@@ -419,6 +434,118 @@ describe("Agenda Managed slice 5 — SELECTED candidate → DRAFT campaign conve
     assert.equal(result.success, false);
     assert.equal(result.code, "NOT_SELECTED");
     assert.equal(db.campaign.length, 0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Sourcing eligibility — conversion refuses a pinned account that cannot
+  // satisfy the marketplace application gate (connectable platform + OAuth-
+  // connected). No Campaign is created in any refusal case.
+  // ---------------------------------------------------------------------------
+
+  it("converts a TIKTOK connected account (eligible)", async () => {
+    const brief = addBrief();
+    const account = addAccount({ platform: "TIKTOK", platformUserId: "tt-1" });
+    const candidate = addCandidate(brief, { socialAccountId: account.id });
+
+    const result = await conversion.convertSelectedCandidateToDraftCampaign(OWNER, {
+      ...CONVERSION_INPUT,
+      briefId: brief.id,
+      candidateId: candidate.id,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(db.campaign[0]?.platform, "TIKTOK");
+  });
+
+  it("converts an X connected account (eligible)", async () => {
+    const brief = addBrief();
+    const account = addAccount({ platform: "X", platformUserId: "x-1" });
+    const candidate = addCandidate(brief, { socialAccountId: account.id });
+
+    const result = await conversion.convertSelectedCandidateToDraftCampaign(OWNER, {
+      ...CONVERSION_INPUT,
+      briefId: brief.id,
+      candidateId: candidate.id,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(db.campaign[0]?.platform, "X");
+  });
+
+  it("refuses a TIKTOK claimed-only account (platformUserId null) and creates no campaign", async () => {
+    const brief = addBrief();
+    const account = addAccount({ platform: "TIKTOK", platformUserId: null });
+    const candidate = addCandidate(brief, { socialAccountId: account.id });
+
+    const result = await conversion.convertSelectedCandidateToDraftCampaign(OWNER, {
+      ...CONVERSION_INPUT,
+      briefId: brief.id,
+      candidateId: candidate.id,
+    });
+
+    assert.equal(result.success, false);
+    assert.equal(result.code, "INELIGIBLE_ACCOUNT");
+    assert.equal(db.campaign.length, 0);
+    assert.equal(candidate.campaignId, null);
+    // The pinned account is untouched — no swap, no rewrite.
+    assert.equal(db.socialAccount.find((a) => a.id === account.id)?.platformUserId, null);
+  });
+
+  it("refuses an X claimed-only account (platformUserId null) and creates no campaign", async () => {
+    const brief = addBrief();
+    const account = addAccount({ platform: "X", platformUserId: null });
+    const candidate = addCandidate(brief, { socialAccountId: account.id });
+
+    const result = await conversion.convertSelectedCandidateToDraftCampaign(OWNER, {
+      ...CONVERSION_INPUT,
+      briefId: brief.id,
+      candidateId: candidate.id,
+    });
+
+    assert.equal(result.success, false);
+    assert.equal(result.code, "INELIGIBLE_ACCOUNT");
+    assert.equal(db.campaign.length, 0);
+  });
+
+  it("refuses an unsupported platform (INSTAGRAM) even when connected and creates no campaign", async () => {
+    const brief = addBrief();
+    const account = addAccount({
+      platform: "INSTAGRAM",
+      platformUserId: "ig-1",
+    });
+    const candidate = addCandidate(brief, { socialAccountId: account.id });
+
+    const result = await conversion.convertSelectedCandidateToDraftCampaign(OWNER, {
+      ...CONVERSION_INPUT,
+      briefId: brief.id,
+      candidateId: candidate.id,
+    });
+
+    assert.equal(result.success, false);
+    assert.equal(result.code, "INELIGIBLE_ACCOUNT");
+    assert.equal(db.campaign.length, 0);
+  });
+
+  it("the eligibility read flags a legacy claimed-only pinned account", async () => {
+    const brief = addBrief();
+    const account = addAccount({ platform: "X", platformUserId: null });
+    addCandidate(brief, { socialAccountId: account.id, status: "SELECTED" });
+
+    const read = await conversion.getSelectedCandidateForConversion(OWNER, brief.id);
+
+    assert.ok(read);
+    assert.equal(read.accountEligible, false);
+  });
+
+  it("the eligibility read flags a connected account as eligible", async () => {
+    const brief = addBrief();
+    const account = addAccount({ platform: "TIKTOK", platformUserId: "tt-9" });
+    addCandidate(brief, { socialAccountId: account.id, status: "SELECTED" });
+
+    const read = await conversion.getSelectedCandidateForConversion(OWNER, brief.id);
+
+    assert.ok(read);
+    assert.equal(read.accountEligible, true);
   });
 
   it("refuses an already-converted candidate", async () => {

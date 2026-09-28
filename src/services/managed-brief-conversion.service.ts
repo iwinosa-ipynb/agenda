@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Prisma } from "@/generated/prisma/client";
 
+import { isManagedBriefSourcingAccountEligible } from "@/lib/managed-brief-eligibility";
 import { toMoneyString } from "@/lib/pricing-math";
 import { prisma } from "@/lib/prisma";
 import type { ManagedBriefConversionInput } from "@/validation/managed-brief";
@@ -47,6 +48,7 @@ export type ConversionErrorCode =
   | "BRIEF_NOT_FOUND"
   | "CANDIDATE_NOT_FOUND"
   | "NOT_SELECTED"
+  | "INELIGIBLE_ACCOUNT"
   | "ALREADY_CONVERTED"
   | "INVALID_INPUT"
   | "CONVERSION_FAILED";
@@ -80,6 +82,13 @@ export async function getSelectedCandidateForConversion(
   accountPlatform: string;
   accountUsername: string;
   campaignId: string | null;
+  /**
+   * True when the pinned account can back a conversion (connectable
+   * platform + OAuth-connected). False means conversion is REFUSED until
+   * the creator connects the account — surfaced so the brief page can show
+   * why instead of rendering a form that can only fail.
+   */
+  accountEligible: boolean;
 } | null> {
   // Ownership-in-query: the brief lookup itself carries the advertiser id.
   const brief = await prisma.managedBrief.findFirst({
@@ -105,7 +114,7 @@ export async function getSelectedCandidateForConversion(
         },
       },
       socialAccount: {
-        select: { platform: true, username: true },
+        select: { platform: true, username: true, platformUserId: true },
       },
     },
   });
@@ -122,6 +131,9 @@ export async function getSelectedCandidateForConversion(
     accountPlatform: candidate.socialAccount.platform,
     accountUsername: candidate.socialAccount.username,
     campaignId: candidate.campaignId,
+    accountEligible: isManagedBriefSourcingAccountEligible(
+      candidate.socialAccount,
+    ),
   };
 }
 
@@ -162,7 +174,7 @@ export async function convertSelectedCandidateToDraftCampaign(
       status: true,
       campaignId: true,
       creatorId: true,
-      socialAccount: { select: { platform: true } },
+      socialAccount: { select: { platform: true, platformUserId: true } },
     },
   });
 
@@ -187,6 +199,25 @@ export async function convertSelectedCandidateToDraftCampaign(
       success: false,
       code: "NOT_SELECTED",
       error: "Only a SELECTED candidate can be converted.",
+    };
+  }
+
+  // ---- 2b. Sourcing eligibility, re-checked against the STORED account at
+  // conversion time. The platform inherited by the Campaign comes from this
+  // account, and the marketplace application gate (`applyToCampaign`)
+  // requires a CONNECTED account on that platform — converting an ineligible
+  // candidate would create a campaign the selected creator can never apply
+  // to. Defense-in-depth: the picker, the add path and the SELECTED
+  // transition already enforce the same rule; this boundary protects against
+  // rows pinned before it existed and against accounts DISCONNECTED after
+  // selection (disconnect nulls platformUserId). The pinned account is never
+  // rewritten or swapped — the refusal tells the advertiser what to do.
+  if (!isManagedBriefSourcingAccountEligible(candidate.socialAccount)) {
+    return {
+      success: false,
+      code: "INELIGIBLE_ACCOUNT",
+      error:
+        "This candidate's account is not connected (TikTok or X). Have the creator connect it before creating the campaign.",
     };
   }
 

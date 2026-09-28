@@ -63,7 +63,14 @@ type BriefRow = {
   createdAt: Date;
   updatedAt: Date;
 };
-type AccountRow = { id: string; creatorId: string; username: string };
+type AccountRow = {
+  id: string;
+  creatorId: string;
+  username: string;
+  platform: string;
+  // null models a claimed-only account (never OAuth-connected).
+  platformUserId: string | null;
+};
 type ProfileRow = { id: string; username: string; userId: string };
 type UserRow = { id: string; supportRosterMember: boolean };
 
@@ -151,7 +158,25 @@ const prismaStub = {
         candidateMatches(candidate, args.where),
       );
 
-      return row ? structuredClone(row) : null;
+      if (!row) return null;
+
+      // The service may select the nested socialAccount (the SELECTED
+      // eligibility gate reads it); resolve it from the stored rows exactly
+      // as the relational join would. The FK guarantees the pinned account
+      // exists — the stub mirrors that invariant.
+      const account = accounts.find((entry) => entry.id === row.socialAccountId);
+
+      // The resolved row carries the joined account when the caller selects
+      // it — widen the row type for the stub's eager enrichment.
+      const enriched = structuredClone(row) as CandidateRow & {
+        socialAccount?: AccountRow;
+      };
+
+      if (account) {
+        enriched.socialAccount = structuredClone(account);
+      }
+
+      return enriched;
     },
     findMany: async (args: { where?: Record<string, unknown> }) => {
       return candidates
@@ -165,14 +190,7 @@ const prismaStub = {
             followerCount: 12_345,
             user: { name: `Creator ${row.creatorId}` },
           },
-          socialAccount: {
-            id: row.socialAccountId,
-            platform: "TIKTOK",
-            username: `handle-${row.socialAccountId}`,
-            profileUrl: `https://example.com/${row.socialAccountId}`,
-            status: "VERIFIED",
-            followerCount: 99_999,
-          },
+          socialAccount: enrichAccount(row.socialAccountId),
         }));
     },
     updateMany: async (args: {
@@ -263,7 +281,43 @@ const prismaStub = {
     },
   },
   creatorProfile: {
-    findMany: async () => {
+    findMany: async (args?: {
+      select?: { socialAccounts?: { where?: Record<string, unknown> } };
+    }) => {
+      // Honor the account-options eligibility filter the service passes
+      // (platform in TIKTOK/X + platformUserId not null) so the stub verifies
+      // the query-level rule rather than bypassing it.
+      const accountFilter =
+        args?.select?.socialAccounts?.where ?? null;
+
+      const passesFilter = (account: AccountRow): boolean => {
+        if (!accountFilter) return true;
+
+        const platformFilter = accountFilter.platform as
+          | { in?: string[] }
+          | undefined;
+
+        if (
+          platformFilter?.in &&
+          !platformFilter.in.includes(account.platform)
+        ) {
+          return false;
+        }
+
+        const userIdFilter = accountFilter.platformUserId as
+          | { not?: unknown }
+          | undefined;
+
+        if (userIdFilter && "not" in userIdFilter) {
+          if (account.platformUserId === userIdFilter.not) return false;
+          if (userIdFilter.not === null && account.platformUserId === null) {
+            return false;
+          }
+        }
+
+        return true;
+      };
+
       return profiles.map((profile) => ({
         id: profile.id,
         username: profile.username,
@@ -271,9 +325,10 @@ const prismaStub = {
         user: { name: `Creator ${profile.id}` },
         socialAccounts: accounts
           .filter((account) => account.creatorId === profile.id)
+          .filter(passesFilter)
           .map((account) => ({
             id: account.id,
-            platform: "TIKTOK",
+            platform: account.platform,
             username: account.username,
           })),
       }));
@@ -402,8 +457,21 @@ function seedBrief(overrides: Partial<BriefRow> = {}): BriefRow {
 function seedCreatorWithAccounts(): void {
   profiles.push({ id: CREATOR_PROFILE_1, username: "creatorone", userId: CREATOR_USER });
   profiles.push({ id: CREATOR_PROFILE_2, username: "creatortwo", userId: "user-creator-2" });
-  accounts.push({ id: ACCOUNT_1, creatorId: CREATOR_PROFILE_1, username: "one" });
-  accounts.push({ id: ACCOUNT_2, creatorId: CREATOR_PROFILE_1, username: "two" });
+  // Both seeded accounts are eligible by default: TIKTOK + OAuth-connected.
+  accounts.push({
+    id: ACCOUNT_1,
+    creatorId: CREATOR_PROFILE_1,
+    username: "one",
+    platform: "TIKTOK",
+    platformUserId: "tt-one",
+  });
+  accounts.push({
+    id: ACCOUNT_2,
+    creatorId: CREATOR_PROFILE_1,
+    username: "two",
+    platform: "X",
+    platformUserId: "x-two",
+  });
 }
 
 function seedCandidate(overrides: Partial<CandidateRow> = {}): CandidateRow {
@@ -422,6 +490,19 @@ function seedCandidate(overrides: Partial<CandidateRow> = {}): CandidateRow {
     updatedAt: now,
     ...overrides,
   };
+
+  // FK integrity mirror: the real database guarantees the pinned account
+  // exists (candidate.socialAccountId → SocialAccount, cascade). Seed a
+  // default eligible account when the test did not create one.
+  if (!accounts.some((account) => account.id === row.socialAccountId)) {
+    accounts.push({
+      id: row.socialAccountId,
+      creatorId: row.creatorId,
+      username: `pinned-${row.socialAccountId}`,
+      platform: "TIKTOK",
+      platformUserId: `tt-${row.socialAccountId}`,
+    });
+  }
 
   candidates.push(row);
 
@@ -451,6 +532,20 @@ function candidateRow(id: string): CandidateRow {
   assert.ok(row, "candidate row should exist");
 
   return row;
+}
+
+/**
+ * Resolve the STORED account row for a candidate's pinned account id —
+ * mirrors the relational join the real query performs when the service
+ * selects a candidate's nested socialAccount (the SELECTED eligibility
+ * gate and the candidate summary read both rely on it).
+ */
+function enrichAccount(accountId: string): AccountRow {
+  const account = accounts.find((entry) => entry.id === accountId);
+
+  assert.ok(account, `account ${accountId} should exist`);
+
+  return structuredClone(account);
 }
 
 const ADD_INPUT = (briefId: string) => ({
@@ -991,6 +1086,253 @@ describe("Agenda Managed V1 — support sourcing candidates", () => {
         "mbc-missing",
       );
       assert.equal(removed.success, false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Sourcing eligibility — only OAuth-connected TIKTOK/X accounts may back a
+  // candidate (picker, pinning, and the SELECTED boundary). Mirrors the
+  // marketplace application gate: a claimed-only or unsupported-platform
+  // account could never satisfy applyToCampaign's connected-account rule.
+  // -------------------------------------------------------------------------
+
+  describe("sourcing account eligibility", () => {
+    it("the account picker only offers connected TIKTOK/X accounts", async () => {
+      seedCreatorWithAccounts();
+      // Ineligible accounts exist on the creator but must never be offered:
+      // a claimed-only TIKTOK account and a connected INSTAGRAM account.
+      accounts.push({
+        id: "account-claimed-tiktok",
+        creatorId: CREATOR_PROFILE_1,
+        username: "claimed",
+        platform: "TIKTOK",
+        platformUserId: null,
+      });
+      accounts.push({
+        id: "account-instagram",
+        creatorId: CREATOR_PROFILE_1,
+        username: "insta",
+        platform: "INSTAGRAM",
+        platformUserId: "ig-1",
+      });
+
+      asRosteredSupport();
+
+      const options =
+        await service.listManagedBriefCandidateAccountOptionsForSupport();
+
+      assert.equal(options.length, 2);
+      assert.ok(options.every((option) => option.accountId !== "account-claimed-tiktok"));
+      assert.ok(options.every((option) => option.accountId !== "account-instagram"));
+      assert.deepEqual(
+        options.map((option) => option.accountId).sort(),
+        [ACCOUNT_1, ACCOUNT_2].sort(),
+      );
+    });
+
+    it("a TIKTOK connected account can be pinned as a candidate (eligible)", async () => {
+      const brief = seedBrief();
+      seedCreatorWithAccounts();
+      asRosteredSupport();
+
+      // ACCOUNT_1 is seeded TIKTOK + connected.
+      const added = expectOk(
+        await service.addManagedBriefCandidateForSupport(ADD_INPUT(brief.id)),
+      );
+
+      assert.equal(candidateRow(added.candidateId).socialAccountId, ACCOUNT_1);
+    });
+
+    it("an X connected account can be pinned as a candidate (eligible)", async () => {
+      const brief = seedBrief();
+      seedCreatorWithAccounts();
+      asRosteredSupport();
+
+      const added = expectOk(
+        await service.addManagedBriefCandidateForSupport({
+          briefId: brief.id,
+          creatorProfileId: CREATOR_PROFILE_1,
+          socialAccountId: ACCOUNT_2, // X + connected
+        }),
+      );
+
+      assert.equal(candidateRow(added.candidateId).socialAccountId, ACCOUNT_2);
+    });
+
+    it("a TIKTOK claimed-only account (platformUserId null) is refused at pinning", async () => {
+      const brief = seedBrief();
+      seedCreatorWithAccounts();
+      accounts.push({
+        id: "account-claimed-tiktok",
+        creatorId: CREATOR_PROFILE_1,
+        username: "claimed",
+        platform: "TIKTOK",
+        platformUserId: null,
+      });
+      asRosteredSupport();
+
+      const result = await service.addManagedBriefCandidateForSupport({
+        briefId: brief.id,
+        creatorProfileId: CREATOR_PROFILE_1,
+        socialAccountId: "account-claimed-tiktok",
+      });
+
+      assert.match(expectRefusal(result), /can't be used for sourcing/u);
+      assert.equal(candidates.length, 0);
+    });
+
+    it("an X claimed-only account (platformUserId null) is refused at pinning", async () => {
+      const brief = seedBrief();
+      seedCreatorWithAccounts();
+      accounts.push({
+        id: "account-claimed-x",
+        creatorId: CREATOR_PROFILE_1,
+        username: "claimed-x",
+        platform: "X",
+        platformUserId: null,
+      });
+      asRosteredSupport();
+
+      const result = await service.addManagedBriefCandidateForSupport({
+        briefId: brief.id,
+        creatorProfileId: CREATOR_PROFILE_1,
+        socialAccountId: "account-claimed-x",
+      });
+
+      assert.match(expectRefusal(result), /can't be used for sourcing/u);
+      assert.equal(candidates.length, 0);
+    });
+
+    it("an unsupported platform (INSTAGRAM) is refused at pinning even when connected", async () => {
+      const brief = seedBrief();
+      seedCreatorWithAccounts();
+      accounts.push({
+        id: "account-instagram",
+        creatorId: CREATOR_PROFILE_1,
+        username: "insta",
+        platform: "INSTAGRAM",
+        platformUserId: "ig-1",
+      });
+      asRosteredSupport();
+
+      const result = await service.addManagedBriefCandidateForSupport({
+        briefId: brief.id,
+        creatorProfileId: CREATOR_PROFILE_1,
+        socialAccountId: "account-instagram",
+      });
+
+      assert.match(expectRefusal(result), /can't be used for sourcing/u);
+      assert.equal(candidates.length, 0);
+    });
+
+    it("a legacy ineligible pinned candidate cannot reach SELECTED", async () => {
+      const brief = seedBrief();
+      // Pin a claimed-only account BEFORE any rule existed (legacy row).
+      accounts.push({
+        id: "account-legacy-claimed",
+        creatorId: CREATOR_PROFILE_1,
+        username: "legacy",
+        platform: "X",
+        platformUserId: null,
+      });
+      const legacy = seedCandidate({
+        briefId: brief.id,
+        socialAccountId: "account-legacy-claimed",
+        status: "INTERESTED",
+      });
+
+      asRosteredSupport();
+
+      // The linear advance INTERESTED → SELECTED must refuse…
+      const advanced = await service.transitionManagedBriefCandidateForSupport(
+        legacy.id,
+      );
+
+      assert.equal(advanced.success, false);
+      if (!advanced.success) {
+        assert.match(advanced.error, /can't be selected/u);
+      }
+      assert.equal(candidateRow(legacy.id).status, "INTERESTED");
+
+      // …and the explicit branch must refuse the same way.
+      const declined = await service.declineManagedBriefCandidateForSupport(
+        legacy.id,
+      );
+
+      assert.equal(declined.success, true); // decline is still allowed — it is an exit, not promotion
+      assert.equal(candidateRow(legacy.id).status, "DECLINED");
+    });
+
+    it("a legacy ineligible pinned candidate is refused at conversion — no campaign is created", async () => {
+      const brief = seedBrief();
+      accounts.push({
+        id: "account-legacy-claimed",
+        creatorId: CREATOR_PROFILE_1,
+        username: "legacy",
+        platform: "TIKTOK",
+        platformUserId: null,
+      });
+      seedCandidate({
+        briefId: brief.id,
+        socialAccountId: "account-legacy-claimed",
+        status: "SELECTED", // already selected before the rule existed
+      });
+
+      asRosteredSupport();
+
+      // The candidate list still shows the stored account (never rewritten)…
+      const list = await service.listManagedBriefCandidatesForSupport(brief.id);
+
+      assert.equal(list.length, 1);
+      assert.equal(list[0]?.account.platform, "TIKTOK");
+
+      // …but conversion is guarded in the conversion service itself (covered
+      // there): here we pin the invariant that the sourcing layer never
+      // promotes such a row toward SELECTED again.
+      const stillSelected = candidates.find(
+        (candidate) => candidate.socialAccountId === "account-legacy-claimed",
+      );
+
+      assert.equal(stillSelected?.status, "SELECTED");
+    });
+
+    it("a candidate whose account becomes connected later can reach SELECTED (no data rewrite)", async () => {
+      const brief = seedBrief();
+      accounts.push({
+        id: "account-connects-later",
+        creatorId: CREATOR_PROFILE_1,
+        username: "laters",
+        platform: "TIKTOK",
+        platformUserId: null,
+      });
+      const candidate = seedCandidate({
+        briefId: brief.id,
+        socialAccountId: "account-connects-later",
+        status: "INTERESTED",
+      });
+
+      asRosteredSupport();
+
+      // Refused while claimed-only…
+      const refused = await service.transitionManagedBriefCandidateForSupport(
+        candidate.id,
+      );
+
+      assert.equal(refused.success, false);
+
+      // …the creator connects the account (the OAuth connect flow updates
+      // the SAME row — nothing about the candidate is rewritten)…
+      const account = accounts.find((entry) => entry.id === "account-connects-later");
+
+      assert.ok(account);
+      account.platformUserId = "tt-later";
+
+      // …and the transition now works.
+      const moved = expectOk(
+        await service.transitionManagedBriefCandidateForSupport(candidate.id),
+      );
+
+      assert.equal(moved.status, "SELECTED");
     });
   });
 

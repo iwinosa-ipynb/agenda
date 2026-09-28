@@ -61,8 +61,15 @@ export type ConversionResult =
   | { success: false; code: ConversionErrorCode; error: string };
 
 /**
- * The SELECTED candidate an advertiser can convert, for their OWN brief —
- * the read side of the slice 5 bridge (null when nothing is convertible).
+ * The brief's SELECTED candidates an advertiser can convert — ALL of them —
+ * for their OWN brief (the read side of the slice 5 bridge; empty when
+ * nothing is convertible).
+ *
+ * A Managed Brief intentionally supports MULTIPLE selected creators. Every
+ * SELECTED candidate is returned, and each converts independently into its
+ * own campaign. Already-converted candidates are deliberately NOT filtered
+ * out: their card must keep showing the "already became a campaign"
+ * continuation state on the brief page.
  *
  * Exposure policy (deliberately minimal, mandated by the locked decision
  * that the owning advertiser performs the conversion): the advertiser sees
@@ -70,26 +77,32 @@ export type ConversionResult =
  * category and the pinned platform account. Internal support data (notes,
  * outreach records, sourcing status history, operator ids) is never
  * selected by this function, exactly as in slices 3–4.
+ *
+ * Deterministic ordering: oldest candidate first (creation order), with the
+ * candidate id as a stable tiebreak. Deliberately NOT `updatedAt` — note
+ * edits and status touches would reshuffle the cards on the brief page.
  */
-export async function getSelectedCandidateForConversion(
+export async function getSelectedCandidatesForConversion(
   advertiserId: string,
   briefId: string,
-): Promise<{
-  candidateId: string;
-  creatorName: string;
-  creatorUsername: string;
-  creatorCategory: string;
-  accountPlatform: string;
-  accountUsername: string;
-  campaignId: string | null;
-  /**
-   * True when the pinned account can back a conversion (connectable
-   * platform + OAuth-connected). False means conversion is REFUSED until
-   * the creator connects the account — surfaced so the brief page can show
-   * why instead of rendering a form that can only fail.
-   */
-  accountEligible: boolean;
-} | null> {
+): Promise<
+  Array<{
+    candidateId: string;
+    creatorName: string;
+    creatorUsername: string;
+    creatorCategory: string;
+    accountPlatform: string;
+    accountUsername: string;
+    campaignId: string | null;
+    /**
+     * True when the pinned account can back a conversion (connectable
+     * platform + OAuth-connected). False means conversion is REFUSED until
+     * the creator connects the account — surfaced so the brief page can show
+     * why instead of rendering a form that can only fail.
+     */
+    accountEligible: boolean;
+  }>
+> {
   // Ownership-in-query: the brief lookup itself carries the advertiser id.
   const brief = await prisma.managedBrief.findFirst({
     where: { id: briefId, advertiserId },
@@ -97,12 +110,12 @@ export async function getSelectedCandidateForConversion(
   });
 
   if (!brief) {
-    return null;
+    return [];
   }
 
-  const candidate = await prisma.managedBriefSourcingCandidate.findFirst({
+  const candidates = await prisma.managedBriefSourcingCandidate.findMany({
     where: { briefId: brief.id, status: "SELECTED" },
-    orderBy: { updatedAt: "desc" },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     select: {
       id: true,
       campaignId: true,
@@ -119,11 +132,7 @@ export async function getSelectedCandidateForConversion(
     },
   });
 
-  if (!candidate) {
-    return null;
-  }
-
-  return {
+  return candidates.map((candidate) => ({
     candidateId: candidate.id,
     creatorName: candidate.creator.user.name ?? candidate.creator.username,
     creatorUsername: candidate.creator.username,
@@ -134,7 +143,7 @@ export async function getSelectedCandidateForConversion(
     accountEligible: isManagedBriefSourcingAccountEligible(
       candidate.socialAccount,
     ),
-  };
+  }));
 }
 
 export async function convertSelectedCandidateToDraftCampaign(

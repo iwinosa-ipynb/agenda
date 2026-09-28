@@ -10,7 +10,7 @@ import { MANAGED_BRIEF_STATUS_LABELS } from "@/lib/constants";
 import { formatMajor } from "@/lib/money";
 import { formatDateTime } from "@/lib/utils";
 import { getViewerAdvertiser } from "@/services/advertiser.service";
-import { getSelectedCandidateForConversion } from "@/services/managed-brief-conversion.service";
+import { getSelectedCandidatesForConversion } from "@/services/managed-brief-conversion.service";
 import { getManagedBrief } from "@/services/managed-brief.service";
 
 export const metadata: Metadata = {
@@ -35,10 +35,14 @@ export default async function ManagedBriefDetailPage({
     notFound();
   }
 
-  // Slice 5: the brief's SELECTED candidate, when one exists and belongs to
-  // this advertiser (ownership-in-query inside the service). Null for briefs
-  // without a selected creator — the conversion control only renders then.
-  const selectedCandidate = await getSelectedCandidateForConversion(profile.id, id);
+  // Slices 5 + multi-selection: ALL of the brief's SELECTED candidates, when
+  // any exist and belong to this advertiser (ownership-in-query inside the
+  // service). A Managed Brief intentionally supports multiple selected
+  // creators — each renders as its own card and converts independently.
+  const selectedCandidates = await getSelectedCandidatesForConversion(
+    profile.id,
+    id,
+  );
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-8">
@@ -106,56 +110,60 @@ export default async function ManagedBriefDetailPage({
         </p>
       </Card>
 
-      {selectedCandidate ? (
-        <Card className="space-y-4 p-6 sm:p-8">
-          <section className="space-y-2">
-            <h2 className="text-sm font-semibold tracking-[0.14em] text-accent uppercase">
-              Selected creator
-            </h2>
-            <p className="text-sm text-ink">
-              {selectedCandidate.creatorName} (@{selectedCandidate.creatorUsername}) ·{" "}
-              {selectedCandidate.creatorCategory} ·{" "}
-              {selectedCandidate.accountPlatform} ({selectedCandidate.accountUsername})
-            </p>
-            <p className="text-xs leading-relaxed text-ink-faint">
-              Your Agenda Managed team selected this creator for your brief.
-              Create a draft campaign from this selection, then publish it —
-              the creator applies like any other campaign, with their own
-              fixed quote.
-            </p>
-          </section>
+      {selectedCandidates.length > 0 ? (
+        <section className="space-y-4">
+          <h2 className="text-sm font-semibold tracking-[0.14em] text-accent uppercase">
+            Selected creators ({selectedCandidates.length})
+          </h2>
+          {selectedCandidates.map((selectedCandidate) => (
+            <Card key={selectedCandidate.candidateId} className="space-y-4 p-6 sm:p-8">
+              <section className="space-y-2">
+                <p className="text-sm text-ink">
+                  {selectedCandidate.creatorName} (@{selectedCandidate.creatorUsername}) ·{" "}
+                  {selectedCandidate.creatorCategory} ·{" "}
+                  {selectedCandidate.accountPlatform} ({selectedCandidate.accountUsername})
+                </p>
+                <p className="text-xs leading-relaxed text-ink-faint">
+                  Your Agenda Managed team selected this creator for your brief.
+                  Create a draft campaign from this selection, then publish it —
+                  the creator applies like any other campaign, with their own
+                  fixed quote. Each selected creator gets their own campaign.
+                </p>
+              </section>
 
-          {selectedCandidate.campaignId ? (
-            <p className="rounded-lg border border-line bg-surface-muted px-3.5 py-3 text-sm text-ink">
-              This selection already became a campaign.{" "}
-              <Link
-                href={`/dashboard/campaigns/${selectedCandidate.campaignId}`}
-                className="font-medium text-accent hover:underline"
-              >
-                Open the campaign
-              </Link>
-            </p>
-          ) : selectedCandidate.accountEligible ? (
-            <ManagedBriefConversionForm
-              briefId={brief.id}
-              candidateId={selectedCandidate.candidateId}
-              creatorName={selectedCandidate.creatorName}
-              accountPlatform={selectedCandidate.accountPlatform}
-              accountUsername={selectedCandidate.accountUsername}
-              defaultTitle={brief.campaignGoal.slice(0, 120)}
-            />
-          ) : (
-            <p className="rounded-lg border border-line bg-surface-muted px-3.5 py-3 text-sm text-ink-soft" role="status">
-              This creator&apos;s {selectedCandidate.accountPlatform} account ({
-                selectedCandidate.accountUsername
-              }){" "}
-              isn&apos;t connected yet, so the campaign can&apos;t be created from
-              this selection — the creator applies with their own fixed quote
-              through that account. Once they connect it, this form becomes
-              available.
-            </p>
-          )}
-        </Card>
+              {selectedCandidate.campaignId ? (
+                <p className="rounded-lg border border-line bg-surface-muted px-3.5 py-3 text-sm text-ink">
+                  This selection already became a campaign.{" "}
+                  <Link
+                    href={`/dashboard/campaigns/${selectedCandidate.campaignId}`}
+                    className="font-medium text-accent hover:underline"
+                  >
+                    Open the campaign
+                  </Link>
+                </p>
+              ) : selectedCandidate.accountEligible ? (
+                <ManagedBriefConversionForm
+                  briefId={brief.id}
+                  candidateId={selectedCandidate.candidateId}
+                  creatorName={selectedCandidate.creatorName}
+                  accountPlatform={selectedCandidate.accountPlatform}
+                  accountUsername={selectedCandidate.accountUsername}
+                  defaultTitle={brief.campaignGoal.slice(0, 120)}
+                />
+              ) : (
+                <p className="rounded-lg border border-line bg-surface-muted px-3.5 py-3 text-sm text-ink-soft" role="status">
+                  This creator&apos;s {selectedCandidate.accountPlatform} account ({
+                    selectedCandidate.accountUsername
+                  }){" "}
+                  isn&apos;t connected yet, so the campaign can&apos;t be created from
+                  this selection — the creator applies with their own fixed quote
+                  through that account. Once they connect it, this form becomes
+                  available.
+                </p>
+              )}
+            </Card>
+          ))}
+        </section>
       ) : null}
     </div>
   );

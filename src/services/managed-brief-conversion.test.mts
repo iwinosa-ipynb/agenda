@@ -94,6 +94,59 @@ const prismaStub = {
     },
   },
   managedBriefSourcingCandidate: {
+    findMany: async (args: {
+      where: Record<string, unknown> & { socialAccount?: unknown };
+      orderBy?: Array<Record<string, string>>;
+      select?: unknown;
+    }) => {
+      // The list read mirrors the relational join the single read performs:
+      // flat where-clause filter, eager account/creator enrichment, then the
+      // service's deterministic ordering applied stub-side.
+      const flatWhere = { ...args.where };
+
+      delete flatWhere.socialAccount;
+
+      const rows = db.managedBriefSourcingCandidate
+        .filter((c) => matches(c, flatWhere))
+        .map((row) => {
+          const enriched = structuredClone(row);
+          const account = db.socialAccount.find(
+            (a) => a.id === row.socialAccountId,
+          );
+
+          if (account) {
+            enriched.socialAccount = structuredClone(account);
+          }
+
+          enriched.creator = enriched.creator ?? {
+            username: `creator-${String(row.creatorId).slice(0, 8)}`,
+            category: "FOOD",
+            user: { name: `Creator ${row.creatorId}` },
+          };
+
+          return enriched;
+        });
+
+      for (const term of [...(args.orderBy ?? [])].reverse()) {
+        const [field, direction] = Object.entries(term)[0] ?? [
+          "id",
+          "asc",
+        ];
+
+        rows.sort((a, b) => {
+          const av = a[field];
+          const bv = b[field];
+          const compared =
+            av instanceof Date && bv instanceof Date
+              ? av.getTime() - bv.getTime()
+              : String(av).localeCompare(String(bv));
+
+          return direction === "desc" ? -compared : compared;
+        });
+      }
+
+      return rows;
+    },
     findFirst: async (args: {
       where: Record<string, unknown> & { socialAccount?: unknown };
     }) => {
@@ -531,7 +584,10 @@ describe("Agenda Managed slice 5 — SELECTED candidate → DRAFT campaign conve
     const account = addAccount({ platform: "X", platformUserId: null });
     addCandidate(brief, { socialAccountId: account.id, status: "SELECTED" });
 
-    const read = await conversion.getSelectedCandidateForConversion(OWNER, brief.id);
+    const [read] = await conversion.getSelectedCandidatesForConversion(
+      OWNER,
+      brief.id,
+    );
 
     assert.ok(read);
     assert.equal(read.accountEligible, false);
@@ -542,10 +598,116 @@ describe("Agenda Managed slice 5 — SELECTED candidate → DRAFT campaign conve
     const account = addAccount({ platform: "TIKTOK", platformUserId: "tt-9" });
     addCandidate(brief, { socialAccountId: account.id, status: "SELECTED" });
 
-    const read = await conversion.getSelectedCandidateForConversion(OWNER, brief.id);
+    const [read] = await conversion.getSelectedCandidatesForConversion(
+      OWNER,
+      brief.id,
+    );
 
     assert.ok(read);
     assert.equal(read.accountEligible, true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Multi-selection read — a Managed Brief intentionally supports MULTIPLE
+  // SELECTED creators; each converts independently. Already-converted
+  // candidates stay listed (their card shows the continuation state).
+  // -------------------------------------------------------------------------
+
+  it("returns ALL selected candidates on a brief in deterministic creation order", async () => {
+    const brief = addBrief();
+    const older = addAccount({ platform: "TIKTOK", platformUserId: "tt-old" });
+    const newer = addAccount({ platform: "X", platformUserId: "x-new" });
+
+    const first = addCandidate(brief, {
+      socialAccountId: older.id,
+      status: "SELECTED",
+      createdAt: new Date(1_000),
+    });
+    const second = addCandidate(brief, {
+      socialAccountId: newer.id,
+      status: "SELECTED",
+      createdAt: new Date(2_000),
+    });
+
+    // A later touch (note edit / status write bumps updatedAt) must NOT
+    // reshuffle the read — ordering is creation-based, not updatedAt.
+    second.updatedAt = new Date(3_000);
+
+    const read = await conversion.getSelectedCandidatesForConversion(
+      OWNER,
+      brief.id,
+    );
+
+    assert.equal(read.length, 2);
+    assert.deepEqual(
+      read.map((candidate) => candidate.candidateId),
+      [first.id, second.id],
+    );
+    assert.equal(read[1]?.accountEligible, true);
+  });
+
+  it("a converted selected candidate stays listed with its campaign continuation state", async () => {
+    const brief = addBrief();
+    const account = addAccount({ platform: "TIKTOK", platformUserId: "tt-1" });
+    addCandidate(brief, {
+      socialAccountId: account.id,
+      status: "SELECTED",
+      campaignId: "camp-already-made-1",
+    });
+
+    const read = await conversion.getSelectedCandidatesForConversion(
+      OWNER,
+      brief.id,
+    );
+
+    assert.equal(read.length, 1);
+    assert.equal(read[0]?.campaignId, "camp-already-made-1");
+    assert.equal(read[0]?.accountEligible, true);
+  });
+
+  it("converting one selected candidate does not hide the other", async () => {
+    const brief = addBrief();
+    const accountA = addAccount({ platform: "TIKTOK", platformUserId: "tt-a" });
+    const accountB = addAccount({ platform: "X", platformUserId: "x-b" });
+
+    const candidateA = addCandidate(brief, {
+      socialAccountId: accountA.id,
+      status: "SELECTED",
+      createdAt: new Date(1_000),
+    });
+    const candidateB = addCandidate(brief, {
+      socialAccountId: accountB.id,
+      status: "SELECTED",
+      createdAt: new Date(2_000),
+    });
+
+    const first = await conversion.convertSelectedCandidateToDraftCampaign(OWNER, {
+      ...CONVERSION_INPUT,
+      briefId: brief.id,
+      candidateId: candidateA.id,
+    });
+
+    assert.equal(first.success, true);
+
+    // The other SELECTED candidate is still listed and still convertible.
+    const read = await conversion.getSelectedCandidatesForConversion(
+      OWNER,
+      brief.id,
+    );
+
+    assert.equal(read.length, 2);
+
+    const converted = read.find(
+      (candidate) => candidate.candidateId === candidateA.id,
+    );
+    const pending = read.find(
+      (candidate) => candidate.candidateId === candidateB.id,
+    );
+
+    assert.equal(converted?.campaignId, first.data.campaignId);
+    assert.equal(pending?.campaignId, null);
+    assert.equal(pending?.accountEligible, true);
+    assert.equal(db.campaign.length, 1);
   });
 
   it("refuses an already-converted candidate", async () => {

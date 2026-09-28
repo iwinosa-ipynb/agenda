@@ -2,10 +2,10 @@ import { SectionHeading } from "@/components/marketing/section-heading";
 import { CheckIcon } from "@/components/ui/icons";
 
 const COMMITMENTS = [
-  "Payouts are designed to be calculated server-side from verified views — never from a number a user submits.",
-  "Follower counts and view counts are treated as unverified until they are checked against a platform source.",
-  "Suspicious, farmed or bot traffic is separated out before any amount becomes payable.",
-  "Every campaign publishes its rate and budget before a creator applies.",
+  "The price is the creator's own fixed quote, accepted by the brand and frozen into the agreement — it never changes after acceptance.",
+  "Funds are placed with the platform before work starts, and released only as milestones are confirmed.",
+  "Follower and view counts are treated as unverified until they are checked against a platform source.",
+  "Every campaign publishes its budget before a creator applies, and every payout follows the agreed milestones.",
 ];
 
 export function TrustSafety() {
@@ -14,8 +14,8 @@ export function TrustSafety() {
       <div className="mx-auto w-full max-w-6xl px-5 py-20 sm:px-8 sm:py-24">
         <SectionHeading
           eyebrow="Trust & safety"
-          title="Verified attention or nothing."
-          description="The whole point of Agenda is that money only moves when real people watched. These are the rules the platform is being built to enforce."
+          title="Agreed prices, funded up front."
+          description="The deal on Agenda is simple: a price the creator sets, the brand accepts, and the platform holds until the work is confirmed. These are the rules the platform enforces."
         />
 
         <ul className="mt-14 grid gap-x-10 gap-y-6 sm:grid-cols-2">
@@ -33,9 +33,9 @@ export function TrustSafety() {
 
         <p className="mt-10 max-w-2xl rounded-xl border border-line bg-surface-muted p-5 text-sm leading-relaxed text-ink-soft">
           <span className="font-medium text-ink">Where we are today:</span>{" "}
-          Agenda&apos;s foundation is live. Platform API integrations, antifraud
-          scoring and payments are not implemented yet, so no view counted in
-          the product is currently presented as verified.
+          Agreements, funding and milestone payouts are live. Platform-verified
+          view counts are shown where verification has run — as performance
+          reporting, never as the basis of a creator&apos;s pay.
         </p>
       </div>
     </section>

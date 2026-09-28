@@ -17,12 +17,12 @@ const ROLE_OPTIONS: Array<{
   {
     value: "CREATOR",
     title: "Creator",
-    body: "Publish sponsored content and earn from verified views.",
+    body: "Publish sponsored content and get paid your own fixed price.",
   },
   {
     value: "ADVERTISER",
     title: "Advertiser",
-    body: "Launch campaigns and pay for verified attention.",
+    body: "Launch campaigns and pay agreed prices through funded milestones.",
   },
 ];
 

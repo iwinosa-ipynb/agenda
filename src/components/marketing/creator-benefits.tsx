@@ -10,22 +10,22 @@ const BENEFITS = [
   {
     icon: TargetIcon,
     title: "Campaigns that match you",
-    body: "Filter by platform, category and location — and see the rate before you apply.",
+    body: "Filter by platform, category and location — and see a campaign's budget before you apply.",
   },
   {
     icon: TrendIcon,
-    title: "Paid per verified view",
-    body: "Payouts are tied to verified performance, so strong content keeps earning.",
+    title: "You set your price",
+    body: "Quote your own fixed fee for every campaign. If the brand accepts it, that quote is locked in as your pay.",
   },
   {
     icon: WalletIcon,
-    title: "Rates are transparent",
-    body: "Every campaign publishes its budget and rate per 1,000 verified views up front.",
+    title: "Get paid on schedule",
+    body: "Accepted quotes are funded up front and released to you as confirmed milestones are completed.",
   },
   {
     icon: UsersIcon,
     title: "Grow with brands",
-    body: "Build a verified track record on Agenda that advertisers can actually trust.",
+    body: "Build a track record on Agenda that advertisers can actually trust.",
   },
 ];
 
@@ -35,8 +35,8 @@ export function CreatorBenefits() {
       <div className="mx-auto w-full max-w-6xl px-5 py-20 sm:px-8 sm:py-24">
         <SectionHeading
           eyebrow="For creators"
-          title="Get paid for the audience you've built."
-          description="No agency gatekeeping and no vague brand deals. Find campaigns, publish, and let verified attention do the earning."
+          title="Get paid what you ask for."
+          description="No agency gatekeeping and no vague brand deals. Find campaigns, name your fixed fee, and get paid through funded milestones."
         />
 
         <div className="mt-14 grid gap-8 sm:grid-cols-2">

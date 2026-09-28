@@ -5,7 +5,7 @@ import { StatCard } from "@/components/dashboard/stat-card";
 import { buttonClasses } from "@/components/ui/button";
 import { Badge, Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { formatCount, formatMoney } from "@/lib/utils";
+import { formatCount } from "@/lib/utils";
 import type {
   CreatorDashboardStats,
   CreatorProfileCompletion,
@@ -92,9 +92,9 @@ export function CreatorOverview({
           hint="Submitted or verifying right now"
         />
         <StatCard
-          label="Verified earnings"
-          value={formatMoney(0)}
-          hint="Payments aren't implemented yet"
+          label="How you get paid"
+          value="Fixed milestones"
+          hint="Your agreed price, released as milestones are confirmed"
         />
       </dl>
 

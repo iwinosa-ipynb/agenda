@@ -25,7 +25,7 @@ export const metadata: Metadata = {
     template: "%s · Agenda",
   },
   description:
-    "Agenda is a marketplace where brands launch campaigns and creators earn from verified audience attention.",
+    "Agenda is a marketplace where brands launch campaigns and creators get paid the fixed price they set — quoted per campaign, released through funded milestones.",
   applicationName: "Agenda",
 };
 

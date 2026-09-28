@@ -29,8 +29,8 @@ export function SiteFooter() {
           <div className="space-y-3 lg:col-span-2">
             <Logo />
             <p className="max-w-xs text-sm leading-relaxed text-ink-soft">
-              A marketplace where brands launch campaigns and creators earn from
-              verified audience attention.
+              A marketplace where brands launch campaigns and creators get paid
+              the fixed price they set.
             </p>
           </div>
 
@@ -58,8 +58,8 @@ export function SiteFooter() {
         <div className="mt-12 flex flex-col gap-2 border-t border-line pt-6 text-xs text-ink-faint sm:flex-row sm:items-center sm:justify-between">
           <p>© {new Date().getFullYear()} Agenda. Nigeria.</p>
           <p>
-            View verification and payouts are being built. Nothing on this site
-            promises guaranteed earnings.
+            Creators are paid the agreed fixed price through funded milestones.
+            Nothing on this site promises guaranteed earnings.
           </p>
         </div>
       </div>

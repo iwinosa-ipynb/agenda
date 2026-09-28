@@ -30,9 +30,9 @@ function ExampleCampaignCard() {
 
       <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-5 border-t border-line pt-6">
         <Stat label="Budget" value={formatMoney(500000)} />
-        <Stat label="Per 1,000 views" value={formatMoney(1200)} />
+        <Stat label="Creator's quote" value={formatMoney(180000)} />
         <Stat label="Min. followers" value="10,000" />
-        <Stat label="Paid on" value="Verified views" />
+        <Stat label="Paid via" value="Milestones" />
       </dl>
     </Card>
   );
@@ -51,8 +51,8 @@ export function Hero() {
 
           <p className="max-w-xl text-lg leading-relaxed text-ink-soft">
             Agenda is a marketplace where brands launch campaigns and creators
-            earn from verified audience attention — priced per 1,000 verified
-            views, not on numbers anyone can type in.
+            set their own fixed price — you name your fee per campaign, and if
+            the brand accepts it, that quote is what you get paid.
           </p>
 
           <div className="flex flex-col gap-3 sm:flex-row">

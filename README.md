@@ -1,15 +1,33 @@
 # Agenda
 
 A creator advertising marketplace for Nigeria (built to expand internationally).
-Brands launch campaigns and creators earn from **verified views**.
+Brands launch campaigns and creators get paid **the fixed price they set** —
+quoted per campaign, accepted by the brand, and released through confirmed
+milestones.
 
-> The **creator and advertiser sides** are built: profiles, social accounts,
-> campaign marketplace, applications, active campaigns and verified-view
-> accounting (Stage 9). Payments, wallets and payouts are **not implemented
-> yet** — nothing displays a figure it cannot verify (verified earnings always
-> read ₦0).
+> The **creator and advertiser sides are live**: profiles, social accounts,
+> campaign marketplace, applications, agreements, funding and milestone
+> payouts. Verified views are platform-checked **performance metrics** shown
+> where verification has run — they are never the basis of a creator's pay.
 
-## Verified views (Stage 9)
+## How creators are paid
+
+```
+creator quotes a fixed fee on a campaign (their own number, never pre-filled)
+  → advertiser accepts the quote → terms are frozen into the agreement
+  → advertiser funds the agreement (platform holds the money up front)
+  → confirmed milestones release the agreed amounts to the creator
+```
+
+- The agreed price never changes after acceptance: later campaign edits do not
+  touch a frozen agreement.
+- Milestone amounts are the advertiser's explicit terms, reconciled exactly to
+  the agreement total.
+- CPM / price-per-1,000-views compensation is retired. The legacy
+  `pricePerThousandViews` column is retained only as zeroed compatibility data
+  for historical rows and is never used by any pricing logic.
+
+## Verified views (performance metrics)
 
 Verified views flow one way, entirely server-side:
 
@@ -99,9 +117,9 @@ src/components/
   dashboard/                Dashboard shell + navigation
 src/lib/                    prisma client, auth config, authz guards, utils,
                             verified-view display helpers
-src/services/               user + campaign services; post verification +
-                            verified-view accounting (Stage 9); payments
-                            interfaces (not implemented)
+src/services/               user + campaign services; applications, agreements,
+                            funding and milestone payouts; post verification +
+                            verified-view accounting
 src/validation/             Zod schemas + error helpers
 src/types/                  Shared types + Auth.js module augmentation
 ```
@@ -109,8 +127,9 @@ src/types/                  Shared types + Auth.js module augmentation
 ## Security notes
 
 - All input is validated with Zod on the server.
-- Payout/price amounts are never taken from the client; they are derived
-  server-side from verified views and the campaign rate.
+- Creator pay is never taken from the client beyond their own quote: the price
+  is frozen at acceptance, milestone terms are reconciled server-side in exact
+  minor units, and every financial derivation happens on the server.
 - Follower counts and views are treated as unverified until confirmed against a
   platform source (see `src/services/verification`).
 - Authenticated routes are guarded server-side in `src/lib/authz.ts`.

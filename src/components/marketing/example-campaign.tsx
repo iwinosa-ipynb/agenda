@@ -2,7 +2,7 @@ import { Badge } from "@/components/ui/card";
 import { formatMoney } from "@/lib/utils";
 
 const BUDGET = 500000;
-const RATE_PER_THOUSAND = 1200;
+const CREATOR_QUOTE = 180000;
 
 const DETAILS = [
   { label: "Platform", value: "TikTok" },
@@ -10,11 +10,14 @@ const DETAILS = [
   { label: "Target location", value: "Lagos" },
   { label: "Minimum followers", value: "10,000" },
   { label: "Budget", value: formatMoney(BUDGET) },
-  { label: "Rate", value: `${formatMoney(RATE_PER_THOUSAND)} / 1,000 views` },
+  { label: "Creator's quote", value: formatMoney(CREATOR_QUOTE) },
 ];
 
 export function ExampleCampaign() {
-  const coveredViews = Math.floor((BUDGET / RATE_PER_THOUSAND) * 1000);
+  const milestones = [
+    { label: "Draft video approved", amount: Math.round(CREATOR_QUOTE / 2) },
+    { label: "Final post published", amount: CREATOR_QUOTE - Math.round(CREATOR_QUOTE / 2) },
+  ];
 
   return (
     <section className="border-b border-line bg-ink text-canvas">
@@ -24,21 +27,23 @@ export function ExampleCampaign() {
             Example campaign
           </p>
           <h2 className="font-display text-3xl leading-[1.1] tracking-[-0.02em] sm:text-4xl">
-            A brand brief, priced per verified view.
+            A brand brief, priced by the creator.
           </h2>
           <p className="max-w-md text-base leading-relaxed text-canvas/70">
             This is an illustration of how a campaign is structured on Agenda.
-            Budgets and payouts are priced on verified views, and every figure
-            below is shown to creators before they apply.
+            Creators quote their own fixed fee, the brand accepts it and funds
+            the agreement, and every figure below is shown before anyone
+            commits.
           </p>
 
           <p className="max-w-md text-sm leading-relaxed text-canvas/60">
-            At {formatMoney(RATE_PER_THOUSAND)} per 1,000 verified views, a{" "}
-            {formatMoney(BUDGET)} budget covers roughly{" "}
+            At a {formatMoney(CREATOR_QUOTE)} agreed price, the{" "}
+            {formatMoney(BUDGET)} budget leaves room for more creators — and
+            the creator is paid{" "}
             <span className="font-medium text-canvas">
-              {coveredViews.toLocaleString("en-NG")}
+              {milestones.length} milestone{milestones.length === 1 ? "" : "s"}
             </span>{" "}
-            verified views.
+            as the work is confirmed.
           </p>
         </div>
 
@@ -61,6 +66,20 @@ export function ExampleCampaign() {
               </div>
             ))}
           </dl>
+
+          <ul className="mt-6 space-y-2 border-t border-white/10 pt-4">
+            {milestones.map((milestone) => (
+              <li
+                key={milestone.label}
+                className="flex items-center justify-between gap-6 text-sm"
+              >
+                <span className="text-canvas/60">{milestone.label}</span>
+                <span className="font-medium text-canvas">
+                  {formatMoney(milestone.amount)}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
     </section>

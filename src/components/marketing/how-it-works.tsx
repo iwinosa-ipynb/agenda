@@ -4,17 +4,17 @@ const STEPS = [
   {
     step: "01",
     title: "Brands launch a campaign",
-    body: "Platform, category, target location, budget, and the rate paid per 1,000 verified views — all set up front.",
+    body: "Platform, category, target location, budget, and the deliverables — all set up front. No hidden rates.",
   },
   {
     step: "02",
-    title: "Creators apply and publish",
-    body: "Creators discover campaigns that fit their audience, apply, get approved, and publish the sponsored content.",
+    title: "Creators quote, brands accept",
+    body: "Creators apply with their own fixed price for the campaign. When a brand accepts, that quote becomes the agreed price.",
   },
   {
     step: "03",
-    title: "Views are verified, creators earn",
-    body: "Agenda tracks each post's performance and separates genuine attention from suspicious traffic. Payouts follow verified views.",
+    title: "Work is funded and paid out",
+    body: "The brand funds the agreement up front. As milestones are confirmed, the agreed amounts are released to the creator.",
   },
 ];
 
@@ -24,8 +24,8 @@ export function HowItWorks() {
       <div className="mx-auto w-full max-w-6xl px-5 py-20 sm:px-8 sm:py-24">
         <SectionHeading
           eyebrow="How it works"
-          title="A marketplace built around performance, not guesswork."
-          description="Agenda connects the two sides of creator advertising with one shared metric: verified views."
+          title="A marketplace built around agreed prices, not guesswork."
+          description="Agenda connects the two sides of creator advertising on one simple basis: a fixed price the creator names and the brand accepts."
         />
 
         <ol className="mt-14 grid gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-3">
@@ -45,7 +45,7 @@ export function HowItWorks() {
         </ol>
 
         <p className="mt-6 text-sm text-ink-faint">
-          View verification and payouts are actively being built — see{" "}
+          Payments, agreements and milestone payouts are live — see{" "}
           <a href="#trust" className="text-accent underline-offset-4 hover:underline">
             Trust &amp; safety
           </a>

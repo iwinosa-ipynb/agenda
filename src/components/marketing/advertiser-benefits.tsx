@@ -9,8 +9,8 @@ import {
 const BENEFITS = [
   {
     icon: ShieldIcon,
-    title: "Pay for real attention",
-    body: "Campaign budgets are designed to release against verified views — not self-reported numbers.",
+    title: "Pay agreed prices, not guesswork",
+    body: "You accept each creator's fixed quote up front. The price you approve is the price you pay — funded before work starts.",
   },
   {
     icon: TargetIcon,
@@ -20,7 +20,7 @@ const BENEFITS = [
   {
     icon: TrendIcon,
     title: "Performance you can see",
-    body: "Track views, likes, comments and shares for every sponsored post in one place.",
+    body: "Track views, likes, comments and shares for every sponsored post in one place, with platform verification.",
   },
   {
     icon: WalletIcon,
@@ -36,7 +36,7 @@ export function AdvertiserBenefits() {
         <SectionHeading
           eyebrow="For advertisers"
           title="Spend where the attention actually is."
-          description="Launch a campaign in minutes, target creators who fit your brief, and only pay against performance you can verify."
+          description="Launch a campaign in minutes, review creators' fixed quotes, and pay agreed prices through funded milestones."
         />
 
         <div className="mt-14 grid gap-8 sm:grid-cols-2">

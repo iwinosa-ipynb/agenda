@@ -57,11 +57,41 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    jwt({ token, user }) {
+    async jwt({ token, user }) {
       if (user) {
+        // Fresh sign-in: anchor the token to the session version at login
+        // time and stamp the identity claims as before.
+        const stored = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { sessionVersion: true },
+        });
+
         token.id = user.id as string;
         token.role = user.role;
+        token.sessionVersion = stored?.sessionVersion ?? 0;
+
+        return token;
       }
+
+      // Every subsequent request: re-read the CURRENT session version. A
+      // token minted before a password reset (which bumps sessionVersion)
+      // carries an older value and is force-invalidated here — the user is
+      // bounced to login on their other devices. The only DB cost is a
+      // single indexed primary-key lookup per request; the id/role claims
+      // and the JWT strategy itself are unchanged.
+      if (token.id) {
+        const stored = await prisma.user.findUnique({
+          where: { id: token.id },
+          select: { sessionVersion: true },
+        });
+
+        if (stored && token.sessionVersion !== stored.sessionVersion) {
+          token.sessionVersion = stored.sessionVersion;
+
+          return null; // force re-authentication
+        }
+      }
+
       return token;
     },
     session({ session, token }) {

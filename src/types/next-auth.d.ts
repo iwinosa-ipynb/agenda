@@ -22,10 +22,14 @@ declare module "next-auth" {
 
 // `next-auth/jwt` only re-exports the interface from `@auth/core/jwt`, so we
 // augment the declaring module to make the extra claims type-safe.
+// `sessionVersion` anchors a JWT to the User.sessionVersion value at sign-in;
+// the jwt callback compares it per request so a password reset (which bumps
+// the column) invalidates tokens minted earlier.
 declare module "@auth/core/jwt" {
   interface JWT {
     id: string;
     role: UserRole;
+    sessionVersion: number;
   }
 }
 
@@ -33,5 +37,6 @@ declare module "next-auth/jwt" {
   interface JWT {
     id: string;
     role: UserRole;
+    sessionVersion: number;
   }
 }

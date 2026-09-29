@@ -112,6 +112,16 @@ enum EmailVerificationStatus {
   EXPIRED
 }
 
+// Lifecycle of a single password-reset challenge (Forgot Password). Same
+// state machine as email verification: at most ONE PENDING challenge per
+// user, single-use consumption via a conditional UPDATE, absolute expiry.
+enum PasswordResetStatus {
+  PENDING
+  CONSUMED
+  SUPERSEDED
+  EXPIRED
+}
+
 // A rate-card item is either listed or not. Reactivation is an explicit
 // creator action — never an automatic side effect of editing.
 enum RateCardItemStatus {
@@ -896,12 +906,18 @@ model User {
   // It is NOT readable or writable from any client path; population is an
   // operational act (INSERT by the operator, like PlatformFeeConfig).
   supportRosterMember Boolean @default(false)
+  // Forgot Password: bumped on every successful password reset. The JWT
+  // callback re-reads this value per request and rejects tokens minted
+  // before the bump, so stateless JWT sessions are invalidated on other
+  // devices without introducing a database session table.
+  sessionVersion Int @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   creatorProfile    CreatorProfile?
   advertiserProfile AdvertiserProfile?
   emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens PasswordResetToken[]
 }
 
 model CreatorProfile {
@@ -1027,6 +1043,41 @@ model EmailVerificationToken {
   expiresAt  DateTime
   consumedAt DateTime?
   // When this challenge was invalidated in favour of a newer one (resend).
+  supersededAt DateTime?
+
+  // IP/UA of the requester is intentionally NOT stored: least data.
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // PENDING challenges per user — at most ONE outstanding at a time.
+  @@unique([userId, status])
+  @@index([expiresAt])
+}
+
+// One password-reset challenge (Forgot Password). Mirrors the Stage 10
+// email-verification challenge exactly: ONLY the SHA-256 hash of the raw
+// token is stored — the raw token exists solely in the emailed link and is
+// never logged. Single use is enforced by a conditional UPDATE (status
+// PENDING + consumedAt null in the WHERE) so two concurrent submissions
+// cannot both succeed — the database is the concurrency arbiter. A new
+// request supersedes the outstanding one (the (userId, status) unique index
+// guarantees at most one PENDING challenge per user).
+model PasswordResetToken {
+  id        String @id @default(uuid())
+  userId    String
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // hex(sha256(token)). Unique: one token string can only ever exist once,
+  // and lookups by token go through an index.
+  tokenHash String @unique
+
+  status     PasswordResetStatus @default(PENDING)
+  // Expiry is absolute: an expired challenge can never be consumed, even if
+  // cleanup has not run yet (status is a cache for queries/audit).
+  expiresAt  DateTime
+  consumedAt DateTime?
+  // When this challenge was invalidated in favour of a newer request.
   supersededAt DateTime?
 
   // IP/UA of the requester is intentionally NOT stored: least data.

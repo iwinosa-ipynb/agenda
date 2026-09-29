@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState } from "react";
 
 import { loginAction } from "@/app/auth/login/actions";
@@ -47,6 +48,15 @@ export function LoginForm() {
           invalid={Boolean(fieldErrors.password)}
         />
       </Field>
+
+      <div className="flex justify-end">
+        <Link
+          href="/auth/forgot-password"
+          className="text-sm font-medium text-accent hover:underline"
+        >
+          Forgot password?
+        </Link>
+      </div>
 
       <SubmitButton className="w-full" size="lg" pendingLabel="Logging in…">
         Log in

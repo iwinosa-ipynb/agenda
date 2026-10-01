@@ -7,6 +7,7 @@ import { applyToCampaignAction } from "@/app/dashboard/_actions/applications";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/field";
 import { FormError } from "@/components/ui/messages";
+import { getQuoteGuidanceWarning } from "@/lib/pricing-math";
 import type { ActionResult } from "@/types";
 
 export type ApplyGuidance = {
@@ -64,6 +65,10 @@ export function ApplyToCampaign({
   >(applyToCampaignAction, null);
   const [quote, setQuote] = useState("");
   const router = useRouter();
+
+  // Soft, advisory-only low-quote nudge. Never blocks, clamps or rewrites the
+  // quote — the creator can submit any valid amount.
+  const lowQuoteWarning = getQuoteGuidanceWarning(quote, guidance);
 
   useEffect(() => {
     if (state?.success) {
@@ -126,6 +131,13 @@ export function ApplyToCampaign({
           ) : (
             guidance.explanation
           )}
+        </p>
+      ) : null}
+
+      {lowQuoteWarning ? (
+        <p className="rounded-lg border border-warning/30 bg-warning-soft px-3.5 py-3 text-xs leading-relaxed text-ink-soft">
+          <span className="font-medium text-ink">Heads up: </span>
+          {lowQuoteWarning}
         </p>
       ) : null}
 

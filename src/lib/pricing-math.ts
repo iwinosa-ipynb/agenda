@@ -96,6 +96,70 @@ export function buildGuidanceRange(samples: number[]): GuidanceRange {
   };
 }
 
+/**
+ * Advisory threshold for the soft low-quote warning. A quote must fall below
+ * this fraction of the suggested minimum before the creator sees a nudge — so
+ * a tiny rounding difference (e.g. quoting ₦107,900 against a ₦108,000
+ * minimum) never triggers it. This is guidance only: it never constrains or
+ * rewrites the quote the creator actually submits.
+ */
+export const LOW_QUOTE_WARNING_FACTOR = 0.9;
+
+/** The guidance shape the warning helper needs — a structural subset so this
+ * module stays free of service imports and remains directly unit-testable. */
+export type QuoteGuidanceInput = {
+  dataAvailability: DataAvailability;
+  suggestedMin: string | null;
+  suggestedMax?: string | null;
+};
+
+/**
+ * Soft, purely-advisory low-quote warning for the apply form.
+ *
+ * Returns a message ONLY when all of the following hold:
+ *   - guidance is AVAILABLE (a real data-backed range exists);
+ *   - a numeric suggestedMin is present;
+ *   - the creator's entered quote is a valid positive number that falls
+ *     MEANINGFULLY below suggestedMin (< suggestedMin × LOW_QUOTE_WARNING_FACTOR).
+ *
+ * Returns null otherwise: empty/invalid quote, quote at or above the minimum,
+ * INSUFFICIENT_DATA, or missing guidance numbers. It NEVER blocks, clamps or
+ * rewrites the quote — the exact amount remains the creator's to submit.
+ */
+export function getQuoteGuidanceWarning(
+  quote: string | number | null | undefined,
+  guidance: QuoteGuidanceInput | null | undefined,
+): string | null {
+  if (!guidance || guidance.dataAvailability !== "AVAILABLE") {
+    return null;
+  }
+
+  if (guidance.suggestedMin === null || guidance.suggestedMin === undefined) {
+    return null;
+  }
+
+  const suggestedMin = Number(guidance.suggestedMin);
+
+  if (!Number.isFinite(suggestedMin) || suggestedMin <= 0) {
+    return null;
+  }
+
+  const numeric =
+    typeof quote === "number"
+      ? quote
+      : Number(String(quote ?? "").trim());
+
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return null;
+  }
+
+  if (numeric >= suggestedMin * LOW_QUOTE_WARNING_FACTOR) {
+    return null;
+  }
+
+  return "Your fee is below the typical range for similar campaigns. This is only guidance — quote what your work is worth to you, and submit whenever you're ready.";
+}
+
 /** Fixed-point string for a validated money value (server-side canonical form). */
 export function toMoneyString(value: number): string {
   return value.toFixed(2);

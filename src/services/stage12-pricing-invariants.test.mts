@@ -464,4 +464,71 @@ describe("Stage 12 pricing invariants", () => {
     assert.equal(guidance.dataAvailability, "INSUFFICIENT_DATA");
     assert.equal(guidance.sampleSize, 0);
   });
+
+  it("guidance returns AVAILABLE with a real range once 5 comparable agreements exist", async () => {
+    // Target campaign: TikTok / Fashion / NGN.
+    addCampaign({ id: "camp-target" });
+
+    // Five comparable ACCEPTED agreements on other TikTok/Fashion/NGN
+    // campaigns — the minimum distinct sample for a published range.
+    const amounts = [
+      "100000.00",
+      "120000.00",
+      "140000.00",
+      "160000.00",
+      "180000.00",
+    ];
+
+    amounts.forEach((amount, index) => {
+      const campaign = addCampaign({ id: `camp-comp-${index}` });
+
+      agreements.push({
+        id: `agr-${index}`,
+        campaignId: campaign.id,
+        applicationId: `app-comp-${index}`,
+        advertiserId: "adv-1",
+        creatorId: `creator-${index}`,
+        status: "ACTIVE",
+        platform: "TIKTOK",
+        agreedAmount: amount,
+        currency: "NGN",
+      });
+    });
+
+    const guidance = await pricingGuidance.getCampaignQuoteGuidance(
+      "camp-target",
+    );
+
+    assert.equal(guidance.dataAvailability, "AVAILABLE");
+    assert.equal(guidance.sampleSize, 5);
+    assert.equal(guidance.suggestedMin, "108000.00");
+    assert.equal(guidance.suggestedMax, "176000.00");
+  });
+
+  it("accepts a below-range creator quote unchanged — guidance never blocks", async () => {
+    addCampaign({ id: "camp-target" });
+
+    // A quote far below any plausible suggested range is still the creator's
+    // to submit, and is frozen verbatim into the agreement.
+    const application = addApplication({
+      campaignId: "camp-target",
+      quoteAmount: "10000.00",
+    });
+
+    const review = await advertiserService.reviewApplication(
+      "adv-1",
+      application.id,
+      "ACCEPT",
+    );
+
+    assert.equal(review.success, true);
+    assert.equal(
+      agreements.find((a) => a.applicationId === application.id)?.agreedAmount,
+      "10000.00",
+    );
+    assert.equal(
+      applications.find((a) => a.id === application.id)?.quoteAmount,
+      "10000.00",
+    );
+  });
 });

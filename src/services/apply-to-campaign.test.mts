@@ -455,4 +455,20 @@ describe("applyToCampaign — marketplace application gate", () => {
     }
     assert.equal(db.campaignApplication.length, 0);
   });
+
+  it("accepts a quote far below any suggested range and stores it unchanged", async () => {
+    seedPublishedCampaign();
+    seedConnectedAccount("TIKTOK");
+
+    // Guidance is advisory only: a low quote is never a block, and the exact
+    // value the creator typed (canonicalized to 2dp) is what gets stored.
+    const result = await applicationService.applyToCampaign(CREATOR_ID, {
+      ...VALID_INPUT,
+      quoteAmount: "1",
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(db.campaignApplication[0]?.quoteAmount, "1.00");
+    assert.equal(db.campaignApplication[0]?.status, "PENDING");
+  });
 });

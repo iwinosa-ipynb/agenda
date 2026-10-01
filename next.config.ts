@@ -2,9 +2,13 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   images: {
-    // Creators supply an external profile photo URL for now. Once uploads land
-    // this can be narrowed to the storage host(s) we actually use.
-    remotePatterns: [{ protocol: "https", hostname: "**" }],
+    // Creator profile photos are stored in Vercel Blob (public store), so the
+    // remote allow-list is narrowed to that host. Legacy external URLs still
+    // render because <Avatar> uses next/image with `unoptimized` (served
+    // as-is, bypassing the optimizer's remote-pattern check).
+    remotePatterns: [
+      { protocol: "https", hostname: "**.public.blob.vercel-storage.com" },
+    ],
   },
 };
 

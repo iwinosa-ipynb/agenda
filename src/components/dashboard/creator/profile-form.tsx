@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 
 import { updateCreatorProfileAction } from "@/app/dashboard/_actions/profile";
+import { ProfilePhotoUpload } from "@/components/dashboard/creator/profile-photo-upload";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { FormError, FormSuccess } from "@/components/ui/messages";
 import { SubmitButton } from "@/components/ui/submit-button";
@@ -141,22 +142,13 @@ export function ProfileForm({ profile }: { profile: CreatorProfileSummary }) {
           />
         </Field>
 
-        <Field
-          label="Profile photo URL"
-          htmlFor="profileImage"
-          hint="Paste a link to an image for now."
-          error={fieldErrors.profileImage?.[0]}
-        >
-          <Input
-            id="profileImage"
-            name="profileImage"
-            type="url"
-            defaultValue={profile.profileImage ?? ""}
-            placeholder="https://…"
-            invalid={Boolean(fieldErrors.profileImage)}
-          />
-        </Field>
       </div>
+
+      <ProfilePhotoUpload
+        name={profile.name}
+        initialUrl={profile.profileImage}
+        error={fieldErrors.profileImage?.[0]}
+      />
 
       <div className="flex justify-end">
         <SubmitButton pendingLabel="Saving…">Save profile</SubmitButton>

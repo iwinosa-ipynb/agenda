@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { upload } from "@vercel/blob/client";
 
 import { Avatar } from "@/components/dashboard/avatar";
@@ -23,6 +23,12 @@ import { cn } from "@/lib/utils";
  * hidden input named `fieldName` and persisted by the form's normal save. No
  * URL is ever written to the database by this component itself, so a failed
  * upload cannot store a bad value.
+ *
+ * The `accept` list includes HEIC/HEIF because phones (iPhones by default)
+ * hand the picker those types; the picker-level acceptance exists purely so
+ * users can COMPLETE the selection and see a specific message instead of a
+ * silently dead control. Server-side validation still enforces the JPEG/PNG/
+ * WebP allow-list (those files are rejected with explicit guidance).
  */
 export function ImageUploadField({
   fieldName,
@@ -64,7 +70,14 @@ export function ImageUploadField({
     setUploadError(null);
 
     if (!isAllowedProfilePhotoContentType(file.type)) {
-      setUploadError("Choose a JPG, PNG or WebP image.");
+      const isIphoneFormat =
+        file.type === "image/heic" || file.type === "image/heif";
+
+      setUploadError(
+        isIphoneFormat
+          ? "This photo is in your phone's default HEIC format. In iOS Settings > Camera > Formats, choose \"Most Compatible\" and retake it, or share it to Files and upload the JPG copy."
+          : "Choose a JPG, PNG or WebP image.",
+      );
       return;
     }
 
@@ -89,8 +102,15 @@ export function ImageUploadField({
       );
 
       setUrl(blob.url);
-    } catch {
-      setUploadError("Upload failed. Please check your connection and try again.");
+    } catch (uploadFailure) {
+      // The failure is almost always the token route (auth, storage config,
+      // rejected content type). Log it: on mobile there is no other way to
+      // see what went wrong.
+      console.error(`${label} upload failed`, uploadFailure);
+
+      setUploadError(
+        "Upload failed. Please check your connection and try again.",
+      );
     } finally {
       setPending(false);
     }
@@ -102,6 +122,19 @@ export function ImageUploadField({
 
       {/* The URL the surrounding form persists through its existing save path. */}
       <input type="hidden" name={fieldName} value={url} />
+
+      {/*
+        The label opens the OS picker without any JavaScript, but everything
+        AFTER selecting a photo (validation, Blob upload, hidden-field update)
+        needs the app's JavaScript. On browsers below the supported baseline
+        React never hydrates, so say so instead of failing silently.
+      */}
+      <noscript>
+        <p className="rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-xs text-warning">
+          Enable JavaScript to upload images — the picker can open without it,
+          but the upload itself cannot run.
+        </p>
+      </noscript>
 
       <div className="flex flex-wrap items-center gap-4">
         <Avatar name={entityName} imageUrl={url || null} size={72} />
@@ -125,7 +158,13 @@ export function ImageUploadField({
             {pending ? "Uploading…" : url ? `Replace ${label.toLowerCase()}` : `Upload ${label.toLowerCase()}`}
             <input
               type="file"
-              accept={["image/jpeg", "image/png", "image/webp"].join(",")}
+              accept={[
+                "image/jpeg",
+                "image/png",
+                "image/webp",
+                "image/heic",
+                "image/heif",
+              ].join(",")}
               className="sr-only"
               disabled={pending}
               onChange={handleFile}

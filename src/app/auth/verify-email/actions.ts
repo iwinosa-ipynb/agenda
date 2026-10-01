@@ -1,5 +1,7 @@
 "use server";
 
+import { redirect } from "next/navigation";
+
 import { requireUser } from "@/lib/authz";
 import { isEmailConfigured } from "@/lib/email/email-service";
 import {
@@ -24,6 +26,12 @@ import { flattenFieldErrors } from "@/validation/errors";
  * are never returned to the client in any mode.
  */
 
+/**
+ * Query-string flags the dashboard profile page renders as feedback after the
+ * no-JavaScript resend redirect (see EmailVerificationStatus).
+ */
+export type VerificationResendStatus = "sent" | "error";
+
 export async function resendVerificationAction(): Promise<ActionResult> {
   const user = await requireUser();
 
@@ -46,6 +54,36 @@ export async function resendVerificationAction(): Promise<ActionResult> {
   }
 
   return { success: true, data: undefined };
+}
+
+/**
+ * Progressive-enhancement variant of the resend: a full-page form POST with a
+ * plain redirect outcome instead of useActionState state. Used by the
+ * dashboard verification card so the resend still works — with visible
+ * feedback via the query flag — when the app's JavaScript cannot run
+ * (browsers below the supported baseline).
+ */
+export async function resendVerificationAndRedirectAction(
+  formData: FormData,
+): Promise<void> {
+  const rawBackTo = formData.get("redirectTo");
+  const backTo = typeof rawBackTo === "string" ? rawBackTo : "/dashboard/profile";
+  const target = backTo.startsWith("/dashboard") ? backTo : "/dashboard/profile";
+
+  const user = await requireUser();
+
+  const result = await resendVerificationEmailForUser({
+    userId: user.id,
+    email: user.email ?? "",
+  });
+
+  if (result.success && isEmailConfigured()) {
+    redirect(`${target}?verification=resend-sent`);
+  }
+
+  // Rate-limited, unknown user, or email not configured: one uniform,
+  // operator-actionable failure surface.
+  redirect(`${target}?verification=resend-failed`);
 }
 
 export async function requestVerificationForEmailAction(

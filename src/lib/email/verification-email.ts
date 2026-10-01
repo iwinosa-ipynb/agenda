@@ -20,7 +20,7 @@ export function buildVerificationUrl(
 ): string {
   const base = (appBaseUrl?.trim() || DEFAULT_APP_BASE_URL).replace(/\/+$/, "");
 
-  return `${base}/verify-email?token=${encodeURIComponent(token)}`;
+  return `${base}/auth/verify-email?token=${encodeURIComponent(token)}`;
 }
 
 type RenderArgs = {

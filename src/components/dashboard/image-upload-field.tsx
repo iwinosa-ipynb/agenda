@@ -4,12 +4,13 @@ import { useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
 
 import { Avatar } from "@/components/dashboard/avatar";
-import { Button } from "@/components/ui/button";
+import { buttonClasses, Button } from "@/components/ui/button";
 import {
   isAllowedProfilePhotoContentType,
   isWithinProfilePhotoSize,
   PROFILE_PHOTO_MAX_BYTES,
 } from "@/lib/profile-photo";
+import { cn } from "@/lib/utils";
 
 /**
  * Shared image uploader for Vercel Blob client uploads — used by the creator
@@ -49,7 +50,6 @@ export function ImageUploadField({
   const [url, setUrl] = useState(initialUrl ?? "");
   const [pending, setPending] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   async function handleFile(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -107,15 +107,30 @@ export function ImageUploadField({
         <Avatar name={entityName} imageUrl={url || null} size={72} />
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={pending}
-            onClick={() => inputRef.current?.click()}
+          {/*
+            Native label activation, not a programmatic input.click(): a visible
+            <label> wrapping a rendered (sr-only, NOT display:none) file input
+            is a real user gesture on the input itself, so the OS file picker
+            opens identically on iOS Safari, Android Chrome and desktop —
+            WebKit silently drops synthetic clicks on non-rendered file inputs,
+            which made this control dead on phones. The input stays focusable,
+            so keyboard users can still tab to it and press Enter.
+          */}
+          <label
+            className={cn(
+              buttonClasses({ variant: "outline", size: "sm" }),
+              pending && "pointer-events-none opacity-55",
+            )}
           >
             {pending ? "Uploading…" : url ? `Replace ${label.toLowerCase()}` : `Upload ${label.toLowerCase()}`}
-          </Button>
+            <input
+              type="file"
+              accept={["image/jpeg", "image/png", "image/webp"].join(",")}
+              className="sr-only"
+              disabled={pending}
+              onChange={handleFile}
+            />
+          </label>
 
           {url ? (
             <Button
@@ -131,14 +146,6 @@ export function ImageUploadField({
               Remove
             </Button>
           ) : null}
-
-          <input
-            ref={inputRef}
-            type="file"
-            accept={["image/jpeg", "image/png", "image/webp"].join(",")}
-            className="hidden"
-            onChange={handleFile}
-          />
         </div>
       </div>
 

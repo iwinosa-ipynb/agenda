@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  ADVERTISER_LOGO_PREFIX,
+  CREATOR_PHOTO_PREFIX,
   isAllowedProfilePhotoContentType,
+  isAllowedUploadPathname,
+  isOwnedUploadUrl,
   isVercelBlobUrl,
   isWithinProfilePhotoSize,
   PROFILE_PHOTO_ALLOWED_CONTENT_TYPES,
@@ -90,5 +94,82 @@ describe("isVercelBlobUrl — delete-ownership guard", () => {
       ),
       false,
     );
+  });
+});
+
+describe("isAllowedUploadPathname — per-flow token scoping", () => {
+  it("accepts paths under the flow's own prefix", () => {
+    assert.equal(
+      isAllowedUploadPathname(
+        "profile-photos/abc-photo.png",
+        CREATOR_PHOTO_PREFIX,
+      ),
+      true,
+    );
+    assert.equal(
+      isAllowedUploadPathname(
+        "advertiser-logos/abc-logo.png",
+        ADVERTISER_LOGO_PREFIX,
+      ),
+      true,
+    );
+  });
+
+  it("rejects a foreign flow's prefix (creator cannot mint logo tokens)", () => {
+    assert.equal(
+      isAllowedUploadPathname(
+        "advertiser-logos/abc-logo.png",
+        CREATOR_PHOTO_PREFIX,
+      ),
+      false,
+    );
+    assert.equal(
+      isAllowedUploadPathname(
+        "profile-photos/abc-photo.png",
+        ADVERTISER_LOGO_PREFIX,
+      ),
+      false,
+    );
+  });
+
+  it("rejects traversal, bare prefixes and empty values", () => {
+    assert.equal(
+      isAllowedUploadPathname("profile-photos/../../secret.png", CREATOR_PHOTO_PREFIX),
+      false,
+    );
+    assert.equal(isAllowedUploadPathname("profile-photos/", CREATOR_PHOTO_PREFIX), false);
+    assert.equal(isAllowedUploadPathname("", CREATOR_PHOTO_PREFIX), false);
+    assert.equal(isAllowedUploadPathname(null, CREATOR_PHOTO_PREFIX), false);
+    assert.equal(isAllowedUploadPathname(undefined, CREATOR_PHOTO_PREFIX), false);
+  });
+});
+
+describe("isOwnedUploadUrl — ownership-scoped deletion", () => {
+  it("accepts a blob URL under the owning flow's prefix", () => {
+    assert.equal(
+      isOwnedUploadUrl(
+        "https://store123.public.blob.vercel-storage.com/advertiser-logos/x.png",
+        ADVERTISER_LOGO_PREFIX,
+      ),
+      true,
+    );
+  });
+
+  it("rejects a blob URL from another flow's prefix", () => {
+    assert.equal(
+      isOwnedUploadUrl(
+        "https://store123.public.blob.vercel-storage.com/profile-photos/x.png",
+        ADVERTISER_LOGO_PREFIX,
+      ),
+      false,
+    );
+  });
+
+  it("rejects external URLs and non-blob values", () => {
+    assert.equal(
+      isOwnedUploadUrl("https://cdn.example.com/advertiser-logos/x.png", ADVERTISER_LOGO_PREFIX),
+      false,
+    );
+    assert.equal(isOwnedUploadUrl(null, ADVERTISER_LOGO_PREFIX), false);
   });
 });

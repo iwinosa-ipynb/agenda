@@ -2,7 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { del } from "@vercel/blob";
 
+import { isOwnedUploadUrl, ADVERTISER_LOGO_PREFIX } from "@/lib/profile-photo";
+import { getAdvertiserProfile } from "@/services/advertiser.service";
 import {
   createCampaign,
   reviewApplication,
@@ -25,6 +28,23 @@ import { flattenFieldErrors } from "@/validation/errors";
 // ---------------------------------------------------------------------------
 // Profile
 // ---------------------------------------------------------------------------
+
+/**
+ * Best-effort delete of a superseded company logo. Only Blob URLs under the
+ * advertiser-logo prefix are ever deleted (never an external URL and never
+ * another flow's blobs), and a cleanup failure must never fail the save.
+ */
+async function deletePreviousLogo(url: string | null): Promise<void> {
+  if (!url || !isOwnedUploadUrl(url, ADVERTISER_LOGO_PREFIX)) {
+    return;
+  }
+
+  try {
+    await del(url);
+  } catch (error) {
+    console.error("advertiser logo cleanup failed", error);
+  }
+}
 
 export async function updateAdvertiserProfileAction(
   _prevState: ActionResult | null,
@@ -51,10 +71,20 @@ export async function updateAdvertiserProfileAction(
     };
   }
 
+  const previousLogo = (await getAdvertiserProfile(userId))?.logoUrl ?? null;
+
   const result = await updateAdvertiserProfile(userId, parsed.data);
 
   if (!result.success) {
     return result;
+  }
+
+  // Replaced or removed logo: delete the previous Blob so abandoned images
+  // don't accumulate. Only runs after a successful save.
+  const nextLogo = parsed.data.logoUrl ?? null;
+
+  if (previousLogo && previousLogo !== nextLogo) {
+    await deletePreviousLogo(previousLogo);
   }
 
   revalidatePath("/dashboard/profile");

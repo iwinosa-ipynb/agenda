@@ -3,6 +3,8 @@
 import { useActionState } from "react";
 
 import { updateAdvertiserProfileAction } from "@/app/dashboard/_actions/advertiser";
+import { ImageUploadField } from "@/components/dashboard/image-upload-field";
+import { ADVERTISER_LOGO_PREFIX } from "@/lib/profile-photo";
 import { Field, Input, Textarea } from "@/components/ui/field";
 import { FormError, FormSuccess } from "@/components/ui/messages";
 import { SubmitButton } from "@/components/ui/submit-button";
@@ -106,23 +108,18 @@ export function AdvertiserProfileForm({
             invalid={Boolean(fieldErrors.country)}
           />
         </Field>
-
-        <Field
-          label="Logo / profile image URL"
-          htmlFor="logoUrl"
-          hint="Paste a link to your logo for now."
-          error={fieldErrors.logoUrl?.[0]}
-        >
-          <Input
-            id="logoUrl"
-            name="logoUrl"
-            type="url"
-            defaultValue={profile.logoUrl ?? ""}
-            placeholder="https://…"
-            invalid={Boolean(fieldErrors.logoUrl)}
-          />
-        </Field>
       </div>
+
+      <ImageUploadField
+        fieldName="logoUrl"
+        label="Company logo"
+        entityName={profile.companyName}
+        initialUrl={profile.logoUrl}
+        handleUploadUrl="/api/upload/advertiser-logo"
+        uploadPrefix={ADVERTISER_LOGO_PREFIX}
+        acceptHint="JPG, PNG or WebP, up to 4 MB. Shown on your campaigns."
+        error={fieldErrors.logoUrl?.[0]}
+      />
 
       <div className="flex justify-end">
         <SubmitButton pendingLabel="Saving…">Save profile</SubmitButton>

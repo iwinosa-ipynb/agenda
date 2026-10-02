@@ -411,7 +411,7 @@ export function CampaignForm({
               ? `/dashboard/campaigns/${campaign.id}`
               : "/dashboard/campaigns"
           }
-          className="inline-flex h-11 items-center justify-center px-4 text-sm text-ink-soft underline-offset-4 hover:text-ink hover:underline"
+          className="inline-flex h-11 items-center justify-center px-4 text-sm text-ink-soft underline-offset-4 transition-colors hover:text-ink hover:underline pressed:text-ink"
         >
           Cancel
         </Link>

@@ -1,6 +1,18 @@
 @import "tailwindcss";
 
 /*
+  Shared pressed-state variant.
+
+  iOS Safari does not apply the CSS `:active` pseudo-class to a tap unless the
+  page has touch handling (see `PressFeedback`), so a bare `active:` utility is
+  unreliable on iPhone. `pressed:` matches either the real `:active` state OR an
+  explicit `data-pressed` attribute, which the shared `PressFeedback` listener
+  sets on `pointerdown`/`touchstart` and clears on release. The `:not(:disabled)`
+  guard keeps disabled/loading buttons on their existing disabled appearance.
+*/
+@custom-variant pressed (&:is(:active, [data-pressed], [data-pressed] *):not(:disabled));
+
+/*
   Agenda design tokens.
   Light, editorial, fintech-serious: a warm off-white canvas, near-black ink and
   a single deep-green accent. Currency/colors are tokenised so a future
@@ -18,7 +30,11 @@
   --color-accent: #0b6b43;
   --color-accent-strong: #08522f;
   --color-accent-soft: #e9f2ec;
+  /* Dedicated "finger is down" shades, darker than both the base and hover
+     colours, so a press is visible even after a hover/tap-left-behind state. */
+  --color-accent-pressed: #053d1e;
   --color-danger: #b42318;
+  --color-danger-pressed: #7f150e;
   --color-danger-soft: #fdeceb;
   --color-warning: #8a5a06;
   --color-warning-soft: #fbf1dc;

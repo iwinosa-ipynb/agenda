@@ -14,7 +14,7 @@ export function CampaignCard({ campaign }: { campaign: CampaignSummary }) {
   return (
     <Link
       href={`/dashboard/campaigns/${campaign.id}`}
-      className="group block h-full rounded-xl transition-transform duration-150 ease-out active:scale-[0.99] motion-reduce:active:scale-100"
+      className="group block h-full rounded-xl transition-transform duration-150 ease-out pressed:scale-[0.99] motion-reduce:pressed:scale-100"
     >
       <Card className="flex h-full flex-col p-5 transition-colors group-hover:border-line-strong">
         <div className="flex items-start justify-between gap-3">

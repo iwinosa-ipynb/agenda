@@ -52,7 +52,7 @@ export function RegisterForm({ defaultRole = "CREATOR" }: { defaultRole?: UserRo
                 defaultChecked={option.value === defaultRole}
                 className="peer sr-only"
               />
-              <span className="flex h-full cursor-pointer flex-col gap-1 rounded-xl border border-line bg-surface p-4 transition-[color,background-color,border-color,transform] duration-150 ease-out hover:border-line-strong active:scale-[0.98] peer-checked:border-accent peer-checked:bg-accent-soft peer-focus-visible:ring-2 peer-focus-visible:ring-accent/40 motion-reduce:active:scale-100">
+              <span className="flex h-full cursor-pointer flex-col gap-1 rounded-xl border border-line bg-surface p-4 transition-[color,background-color,border-color,scale] duration-150 ease-out hover:border-line-strong pressed:scale-[0.98] pressed:border-accent peer-checked:border-accent peer-checked:bg-accent-soft peer-focus-visible:ring-2 peer-focus-visible:ring-accent/40 motion-reduce:pressed:scale-100">
                 <span className="text-sm font-semibold text-ink">
                   {option.title}
                 </span>

@@ -10,20 +10,27 @@ export type ButtonVariant =
   | "danger";
 export type ButtonSize = "sm" | "md" | "lg";
 
+// `pressed:` (see globals.css) matches both the real `:active` state and the
+// `data-pressed` attribute set by <PressFeedback>, so the press reads on iOS
+// Safari where `:active` alone is unreliable. `transition-[...,scale,...]` is
+// required because Tailwind's `scale-*` utilities animate the `scale` property,
+// not `transform`.
 const BASE =
-  "inline-flex select-none items-center justify-center gap-2 rounded-lg font-medium whitespace-nowrap transition-[color,background-color,border-color,transform,opacity] duration-150 ease-out outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas active:scale-[0.97] active:duration-75 motion-reduce:active:scale-100 disabled:pointer-events-none disabled:opacity-55";
+  "inline-flex select-none items-center justify-center gap-2 rounded-lg font-medium whitespace-nowrap transition-[color,background-color,border-color,scale,opacity] duration-150 ease-out outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas pressed:scale-[0.96] pressed:duration-75 motion-reduce:pressed:scale-100 disabled:pointer-events-none disabled:opacity-55";
 
-// Pressed feedback per variant. A press is confirmed even when the button is
-// already showing its hover colour (e.g. a keyboard/tap "click" on touch),
-// so mobile users get a visible response instead of nothing.
+// Pressed feedback per variant. Every pressed colour is darker than both the
+// base and the hover colour, so a press is clearly visible even on touch where
+// the hover colour may already be showing.
 const VARIANTS: Record<ButtonVariant, string> = {
-  primary: "bg-ink text-canvas hover:bg-ink/88 active:bg-ink/80",
-  accent: "bg-accent text-white hover:bg-accent-strong active:bg-accent-strong",
+  primary: "bg-ink text-canvas hover:bg-ink/88 pressed:bg-ink/70",
+  accent:
+    "bg-accent text-white hover:bg-accent-strong pressed:bg-accent-pressed",
   outline:
-    "border border-line-strong bg-surface text-ink hover:bg-surface-muted active:bg-surface-muted active:border-ink/25",
+    "border border-line-strong bg-surface text-ink hover:bg-surface-muted pressed:border-ink/25 pressed:bg-line",
   ghost:
-    "text-ink-soft hover:bg-surface-muted hover:text-ink active:bg-surface-muted active:text-ink",
-  danger: "bg-danger text-white hover:bg-danger/90 active:bg-danger/80",
+    "text-ink-soft hover:bg-surface-muted hover:text-ink pressed:bg-line pressed:text-ink",
+  danger:
+    "bg-danger text-white hover:bg-danger/90 pressed:bg-danger-pressed",
 };
 
 const SIZES: Record<ButtonSize, string> = {

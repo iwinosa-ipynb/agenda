@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
 
+import { PressFeedback } from "@/components/ui/press-feedback";
+
 import "./globals.css";
 
 const geistSans = Geist({
@@ -36,6 +38,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} ${instrumentSerif.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col bg-canvas text-ink">
+        {/* Enables iOS Safari `:active` and drives the shared pressed state. */}
+        <PressFeedback />
         {children}
       </body>
     </html>

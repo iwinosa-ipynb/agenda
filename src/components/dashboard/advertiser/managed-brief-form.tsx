@@ -118,7 +118,7 @@ export function ManagedBriefForm() {
             {CHANNEL_OPTIONS.map((channel) => (
               <label
                 key={channel.value}
-                className="flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-surface px-3.5 py-2.5 text-sm text-ink transition-colors hover:border-accent"
+                className="flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-surface px-3.5 py-2.5 text-sm text-ink transition-[color,background-color,border-color,transform] duration-150 ease-out hover:border-accent active:scale-[0.98] active:border-accent active:bg-accent-soft motion-reduce:active:scale-100"
               >
                 <input
                   type="checkbox"

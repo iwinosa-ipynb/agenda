@@ -11,14 +11,19 @@ export type ButtonVariant =
 export type ButtonSize = "sm" | "md" | "lg";
 
 const BASE =
-  "inline-flex items-center justify-center gap-2 rounded-lg font-medium whitespace-nowrap transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:pointer-events-none disabled:opacity-55";
+  "inline-flex select-none items-center justify-center gap-2 rounded-lg font-medium whitespace-nowrap transition-[color,background-color,border-color,transform,opacity] duration-150 ease-out outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas active:scale-[0.97] active:duration-75 motion-reduce:active:scale-100 disabled:pointer-events-none disabled:opacity-55";
 
+// Pressed feedback per variant. A press is confirmed even when the button is
+// already showing its hover colour (e.g. a keyboard/tap "click" on touch),
+// so mobile users get a visible response instead of nothing.
 const VARIANTS: Record<ButtonVariant, string> = {
-  primary: "bg-ink text-canvas hover:bg-ink/88",
-  accent: "bg-accent text-white hover:bg-accent-strong",
-  outline: "border border-line-strong bg-surface text-ink hover:bg-surface-muted",
-  ghost: "text-ink-soft hover:bg-surface-muted hover:text-ink",
-  danger: "bg-danger text-white hover:bg-danger/90",
+  primary: "bg-ink text-canvas hover:bg-ink/88 active:bg-ink/80",
+  accent: "bg-accent text-white hover:bg-accent-strong active:bg-accent-strong",
+  outline:
+    "border border-line-strong bg-surface text-ink hover:bg-surface-muted active:bg-surface-muted active:border-ink/25",
+  ghost:
+    "text-ink-soft hover:bg-surface-muted hover:text-ink active:bg-surface-muted active:text-ink",
+  danger: "bg-danger text-white hover:bg-danger/90 active:bg-danger/80",
 };
 
 const SIZES: Record<ButtonSize, string> = {

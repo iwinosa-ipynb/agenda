@@ -57,11 +57,11 @@ export function DashboardNav({
             href={item.href}
             aria-current={isActive ? "page" : undefined}
             className={cn(
-              "flex items-center rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+              "flex items-center rounded-lg px-3 py-2 text-sm font-medium transition-[color,background-color,transform] duration-150 ease-out active:scale-[0.97] motion-reduce:active:scale-100",
               orientation === "horizontal" && "shrink-0 whitespace-nowrap",
               isActive
-                ? "bg-ink text-canvas"
-                : "text-ink-soft hover:bg-surface-muted hover:text-ink",
+                ? "bg-ink text-canvas active:bg-ink/80"
+                : "text-ink-soft hover:bg-surface-muted hover:text-ink active:bg-surface-muted active:text-ink",
             )}
           >
             {item.label}

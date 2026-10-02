@@ -7,6 +7,7 @@ import {
   createCampaignAction,
   updateCampaignAction,
 } from "@/app/dashboard/_actions/advertiser";
+import { buttonClasses } from "@/components/ui/button";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { FormError } from "@/components/ui/messages";
 import { SubmitButton } from "@/components/ui/submit-button";
@@ -424,7 +425,7 @@ export function CampaignForm({
               name="intent"
               value="draft"
               disabled={createState !== null && createState.success}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line-strong bg-surface px-4 text-sm font-medium whitespace-nowrap text-ink transition-colors hover:bg-surface-muted disabled:pointer-events-none disabled:opacity-55"
+              className={buttonClasses({ variant: "outline", size: "md" })}
             >
               Save draft
             </button>
@@ -432,7 +433,7 @@ export function CampaignForm({
               type="submit"
               name="intent"
               value="publish"
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-accent px-6 text-sm font-medium whitespace-nowrap text-white transition-colors hover:bg-accent-strong disabled:pointer-events-none disabled:opacity-55"
+              className={buttonClasses({ variant: "accent", size: "md", className: "px-6" })}
             >
               Publish campaign
             </button>

@@ -60,7 +60,10 @@ export async function AdvertiserCampaignsView() {
 
 function CampaignRow({ campaign }: { campaign: AdvertiserCampaignSummary }) {
   return (
-    <Link href={`/dashboard/campaigns/${campaign.id}`} className="group block">
+    <Link
+      href={`/dashboard/campaigns/${campaign.id}`}
+      className="group block rounded-xl transition-transform duration-150 ease-out active:scale-[0.99] motion-reduce:active:scale-100"
+    >
       <Card className="p-5 transition-colors group-hover:border-line-strong">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0 space-y-1.5">

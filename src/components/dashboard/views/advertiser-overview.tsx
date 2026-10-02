@@ -113,7 +113,11 @@ export async function AdvertiserOverview() {
         className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
       >
         {QUICK_LINKS.map((link) => (
-          <Link key={link.href} href={link.href} className="group block h-full">
+          <Link
+            key={link.href}
+            href={link.href}
+            className="group block h-full rounded-xl transition-transform duration-150 ease-out active:scale-[0.99] motion-reduce:active:scale-100"
+          >
             <Card className="flex h-full items-center justify-between p-5 transition-colors group-hover:border-line-strong">
               <span className="text-sm font-medium text-ink">
                 {link.label}

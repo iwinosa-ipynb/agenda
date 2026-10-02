@@ -12,9 +12,181 @@ import {
 } from "@/lib/profile-photo";
 import { cn } from "@/lib/utils";
 
-/* ──▶ DIAG: module-eval marker (proves the bundle actually executed) ◀─ */
-console.log("[DIAG] image-upload-field module evaluated");
-/* ──────────────────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════
+   TEMPORARY VISIBLE DIAGNOSTICS — remove after the real iPhone test.
+   State lives at MODULE scope so it survives re-renders AND remounts
+   (a remount would otherwise wipe the evidence we are hunting for).
+   ══════════════════════════════════════════════════════════════════════ */
+
+type DiagStatus = "ok" | "err" | "idle";
+
+interface DiagEntry {
+  status: DiagStatus;
+  detail: string;
+  time: string;
+}
+
+const DIAG_ORDER = [
+  "MODULE",
+  "MOUNT",
+  "LISTENER",
+  "CLICK",
+  "CHANGE",
+  "HANDLE",
+  "FILE",
+  "VALIDATION",
+  "PENDING",
+  "UPLOAD",
+  "SERVER",
+  "SUCCESS",
+  "ERROR",
+] as const;
+
+type DiagKey = (typeof DIAG_ORDER)[number];
+
+const DIAG_ENTRIES: Partial<Record<DiagKey, DiagEntry>> = {};
+const DIAG_SUBS = new Set<() => void>();
+let DIAG_MOUNTS = 0;
+
+function diagNow(): string {
+  const d = new Date();
+  const p = (n: number, width = 2) => String(n).padStart(width, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
+}
+
+function setDiag(key: DiagKey, status: DiagStatus, detail: string): void {
+  DIAG_ENTRIES[key] = { status, detail, time: diagNow() };
+  DIAG_SUBS.forEach((notify) => notify());
+}
+
+function resetDiagnostics(): void {
+  for (const key of DIAG_ORDER) {
+    delete DIAG_ENTRIES[key];
+  }
+  setDiag("MODULE", "ok", "RESET pressed — component bundle is loaded");
+}
+
+/** Subscribe the component to diagnostic-store updates. */
+function useDiagTick(): void {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    const notify = () => setTick((tick) => tick + 1);
+    DIAG_SUBS.add(notify);
+    return () => {
+      DIAG_SUBS.delete(notify);
+    };
+  }, []);
+}
+
+/**
+ * Stamp a DOM node once so the panel can prove whether the listener is on
+ * the SAME input element the user actually interacts with.
+ */
+function diagTag(el: HTMLInputElement | null): string {
+  const tagged = el as unknown as { __diagId?: string } | null;
+  if (tagged && !tagged.__diagId) {
+    tagged.__diagId = `E${Math.random().toString(36).slice(2, 7)}`;
+  }
+  return tagged ? (tagged.__diagId ?? "?") : "null";
+}
+
+/**
+ * Diagnostic-only reachability probe. `upload()` does not expose the token
+ * response headers to its caller, so this asks the same route directly and
+ * reads back the temporary `x-diag-server` header. Sends no file bytes, no
+ * tokens, and nothing sensitive.
+ */
+async function probeServer(url: string): Promise<{ ok: boolean; detail: string }> {
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "diag-probe" }),
+      cache: "no-store",
+    });
+    const header = res.headers.get("x-diag-server");
+    return {
+      ok: header === "reached",
+      detail: header
+        ? `reached — HTTP ${res.status}, x-diag-server: ${header}`
+        : `HTTP ${res.status} but NO x-diag-server header`,
+    };
+  } catch (probeError) {
+    return {
+      ok: false,
+      detail: `unreachable — ${
+        probeError instanceof Error ? probeError.message : String(probeError)
+      }`,
+    };
+  }
+}
+
+// Fires at bundle evaluation: proves the diagnostic JS actually loaded.
+setDiag("MODULE", "ok", "component bundle evaluated");
+
+/** Visible panel — deliberately loud so it cannot be missed on a phone. */
+function DiagPanel() {
+  return (
+    <div className="overflow-hidden rounded-xl border-4 border-red-600 bg-amber-50 shadow-2xl">
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-red-600 px-3 py-2">
+        <p className="text-xs font-black uppercase tracking-wider text-white">
+          ⚠ Upload diagnostics (temporary)
+        </p>
+        <button
+          type="button"
+          onClick={resetDiagnostics}
+          className="rounded-md border-2 border-white bg-white px-3 py-1.5 text-xs font-black uppercase text-red-700 active:bg-red-100"
+        >
+          Reset diagnostics
+        </button>
+      </div>
+
+      <ol className="divide-y divide-amber-200 px-2 py-1">
+        {DIAG_ORDER.map((key, index) => {
+          const entry = DIAG_ENTRIES[key];
+          const status: DiagStatus = entry?.status ?? "idle";
+
+          return (
+            <li
+              key={key}
+              className={cn(
+                "px-1 py-1.5 font-mono text-[11px] leading-tight",
+                status === "ok" && "text-green-800",
+                status === "err" && "text-red-700",
+                status === "idle" && "text-gray-400",
+              )}
+            >
+              <div className="flex items-baseline gap-2">
+                <span className="w-3 shrink-0 text-sm font-black">
+                  {status === "ok" ? "✓" : status === "err" ? "✗" : "·"}
+                </span>
+                <span className="shrink-0 font-black text-gray-700">
+                  {index + 1}.
+                </span>
+                <span className="shrink-0 font-black uppercase text-gray-900">
+                  {key}
+                </span>
+                <span className="ml-auto shrink-0 text-gray-500">
+                  {entry?.time ?? ""}
+                </span>
+              </div>
+              <div className="ml-5 break-words">
+                {entry ? entry.detail : "not reached"}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+
+      <p className="border-t-2 border-red-600 bg-red-50 px-3 py-1.5 font-mono text-[10px] leading-snug text-red-800">
+        mounts: {DIAG_MOUNTS} · state persists across re-renders and remounts ·
+        clears only on RESET or full page reload
+      </p>
+    </div>
+  );
+}
+/* ══════════════════════════════════════════════════════════════════════ */
 
 /**
  * Shared image uploader for Vercel Blob client uploads — used by the creator
@@ -61,75 +233,54 @@ export function ImageUploadField({
   const [pending, setPending] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  /* ──▶ DIAG BLOCK: identity + render tracking ◀─ */
-  const diagId = useRef(
-    `IMG-${Math.random().toString(36).slice(2, 8)}`,
-  ).current;
-  const diagRenders = useRef(0);
-  diagRenders.current += 1;
-
-  /** Tag a DOM node once so we can tell whether React replaced it. */
-  const diagTag = (el: HTMLInputElement | null): string => {
-    const tagged = el as unknown as { __diagId?: string } | null;
-    if (tagged && !tagged.__diagId) {
-      tagged.__diagId = `E${Math.random().toString(36).slice(2, 7)}`;
-    }
-    return tagged ? (tagged.__diagId ?? "?") : "null";
-  };
-  /* ──────────────────────────────────────────────────────────────── */
+  // Re-render the panel whenever a checkpoint is recorded.
+  useDiagTick();
 
   async function handleFile(event: React.ChangeEvent<HTMLInputElement>) {
-    /* ──▶ DIAG B4: handleFile actually invoked ◀─ */
-    console.log(
-      `[DIAG] ${diagId} B4 handleFile CALLED target=${diagTag(
-        event.target as HTMLInputElement,
-      )}`,
-    );
-    /* ──────────────────────────────────────────────────────────── */
+    setDiag("HANDLE", "ok", "handleFile invoked by native change listener");
 
     const file = event.target.files?.[0];
-
-    /* ──▶ DIAG B5: File object exists? name/type/size ── */
-    console.log(
-      `[DIAG] ${diagId} B5 files.length=${
-        event.target.files?.length ?? 0
-      } name=${file?.name ?? "(none)"} type=${file?.type ?? "(none)"} size=${
-        file?.size ?? "n/a"
-      }`,
-    );
-    /* ──────────────────────────────────────────────────────────── */
+    const filesLength = event.target.files?.length ?? 0;
 
     // Allow re-selecting the same file after a failure.
     event.target.value = "";
 
     if (!file) {
-      /* ──▶ DIAG: no File object — silent early return (looks like "nothing happened") ── */
-      console.log(
-        `[DIAG] ${diagId} !! B5 NO FILE — early return (no error shown to user)`,
+      setDiag(
+        "FILE",
+        "err",
+        `NO FILE — files.length=${filesLength} (silent early return, no message shown)`,
       );
-      /* ──────────────────────────────────────────────────────── */
+      setDiag(
+        "ERROR",
+        "err",
+        `files[0] was undefined (files.length=${filesLength})`,
+      );
+      setDiag("SERVER", "idle", "not attempted — stopped before any request");
       return;
     }
 
+    setDiag(
+      "FILE",
+      "ok",
+      `name=${file.name} · type=${file.type || "(empty)"} · size=${file.size} bytes`,
+    );
+
     setUploadError(null);
 
-    /* ──▶ DIAG B6: client-side validation ── */
-    const diagAllowed = isAllowedProfilePhotoContentType(file.type);
-    const diagSized = isWithinProfilePhotoSize(file.size);
-    console.log(
-      `[DIAG] ${diagId} B6 validation allowed=${diagAllowed} sized=${diagSized} type="${file.type}" size=${file.size}`,
-    );
-    /* ──────────────────────────────────────────────────────────── */
+    const typeAllowed = isAllowedProfilePhotoContentType(file.type);
+    const sizeAllowed = isWithinProfilePhotoSize(file.size);
 
-    if (!isAllowedProfilePhotoContentType(file.type)) {
+    if (!typeAllowed) {
       const isIphoneFormat =
         file.type === "image/heic" || file.type === "image/heif";
+      const reason = isIphoneFormat
+        ? "REJECT — iPhone HEIC/HEIF format not in jpeg/png/webp allow-list"
+        : `REJECT — type "${file.type || "(empty)"}" not in jpeg/png/webp allow-list`;
 
-      /* ──▶ DIAG: rejected by content type (an error message IS rendered) ── */
-      console.log(
-        `[DIAG] ${diagId} !! B6 REJECTED contentType (isIphoneFormat=${isIphoneFormat}) — error message set`,
-      );
-      /* ──────────────────────────────────────────────────────── */
+      setDiag("VALIDATION", "err", reason);
+      setDiag("ERROR", "err", `Content type rejected: ${reason}`);
+      setDiag("SERVER", "idle", "not attempted — stopped at VALIDATION");
 
       setUploadError(
         isIphoneFormat
@@ -139,12 +290,12 @@ export function ImageUploadField({
       return;
     }
 
-    if (!isWithinProfilePhotoSize(file.size)) {
-      /* ──▶ DIAG: rejected by size (an error message IS rendered) ── */
-      console.log(
-        `[DIAG] ${diagId} !! B6 REJECTED size — error message set`,
-      );
-      /* ──────────────────────────────────────────────────────── */
+    if (!sizeAllowed) {
+      const reason = `REJECT — ${file.size} bytes outside 1..${PROFILE_PHOTO_MAX_BYTES} bytes`;
+
+      setDiag("VALIDATION", "err", reason);
+      setDiag("ERROR", "err", `Size rejected: ${file.size} bytes`);
+      setDiag("SERVER", "idle", "not attempted — stopped at VALIDATION");
 
       setUploadError(
         `Image must be 4 MB or smaller (max ${PROFILE_PHOTO_MAX_BYTES / (1024 * 1024)} MB).`,
@@ -152,16 +303,24 @@ export function ImageUploadField({
       return;
     }
 
-    /* ──▶ DIAG B7: pending state set (label should switch to "Uploading…") ── */
-    console.log(`[DIAG] ${diagId} B7 setPending(true)`);
-    /* ──────────────────────────────────────────────────────────── */
-    setPending(true);
-
-    /* ──▶ DIAG B8: upload request initiated ── */
-    console.log(
-      `[DIAG] ${diagId} B8 upload() START prefix=${uploadPrefix} handleUploadUrl=${handleUploadUrl}`,
+    setDiag(
+      "VALIDATION",
+      "ok",
+      `PASS — type ${file.type}, size ${file.size} bytes within limit`,
     );
-    /* ──────────────────────────────────────────────────────────── */
+
+    setPending(true);
+    setDiag(
+      "PENDING",
+      "ok",
+      "setPending(true) — button should read \"Uploading…\" and input becomes disabled",
+    );
+
+    setDiag(
+      "UPLOAD",
+      "ok",
+      `client upload() → POST ${handleUploadUrl} (prefix ${uploadPrefix})`,
+    );
 
     try {
       const blob = await upload(
@@ -174,33 +333,38 @@ export function ImageUploadField({
         },
       );
 
-      /* ──▶ DIAG B10: Blob upload succeeded ── */
-      console.log(`[DIAG] ${diagId} B10 upload() SUCCESS url=${blob.url}`);
-      /* ──────────────────────────────────────────────────────── */
+      const probe = await probeServer(handleUploadUrl);
+      setDiag(
+        "SERVER",
+        probe.ok ? "ok" : "err",
+        `probe → ${probe.detail} · upload: token minted`,
+      );
 
-      /* ──▶ DIAG B12: state update → Avatar preview ── */
-      console.log(`[DIAG] ${diagId} B12 setUrl() → UI update`);
-      /* ──────────────────────────────────────────────────────── */
+      setDiag("SUCCESS", "ok", `Blob URL: ${blob.url}`);
       setUrl(blob.url);
     } catch (uploadFailure) {
+      const message =
+        uploadFailure instanceof Error
+          ? uploadFailure.message
+          : String(uploadFailure);
+
+      const probe = await probeServer(handleUploadUrl);
+      setDiag(
+        "SERVER",
+        probe.ok ? "ok" : "err",
+        `probe → ${probe.detail} · upload: FAILED`,
+      );
+      setDiag("ERROR", "err", message);
+
       // The failure is almost always the token route (auth, storage config,
       // rejected content type). Log it: on mobile there is no other way to
       // see what went wrong.
-      /* ──▶ DIAG: upload threw — covers B9 (server reached) vs network ── */
-      console.error(
-        `[DIAG] ${diagId} !! B8/B10 upload() THREW:`,
-        uploadFailure,
-      );
-      /* ──────────────────────────────────────────────────────── */
       console.error(`${label} upload failed`, uploadFailure);
 
       setUploadError(
         "Upload failed. Please check your connection and try again.",
       );
     } finally {
-      /* ──▶ DIAG B7: pending cleared ── */
-      console.log(`[DIAG] ${diagId} B7 setPending(false)`);
-      /* ──────────────────────────────────────────────────────── */
       setPending(false);
     }
   }
@@ -211,13 +375,13 @@ export function ImageUploadField({
    * bubble to the React root container (React 17+ delegates events on the root,
    * not on `document`).  This was previously tracked upstream as
    * https://github.com/facebook/react/issues/25308 ("event not bubbling to
-   * root on iOS Safari").  The user would tap Upload → pick a photo → the
-   * picker closes — and nothing else happens: no preview, no error.
+   * root on iOS Safari").
    *
-   * The fix: attach a NATIVE change listener directly on the <input> element
-   * via addEventListener, which runs regardless of React's event delegation.
-   * A ref always points at the latest handleFile closure so the listener can
-   * be registered once at mount and cleaned up at unmount.
+   * A NATIVE change listener is attached directly on the <input> element so it
+   * runs regardless of React's event delegation.  A ref always points at the
+   * latest handleFile closure so the listener can be registered once at mount
+   * and cleaned up at unmount.  (Behaviour is under investigation — the panel
+   * above reports which checkpoint the real device actually reaches.)
    */
   const fileInputRef = useRef<HTMLInputElement>(null);
   const handleFileRef = useRef(handleFile);
@@ -225,86 +389,58 @@ export function ImageUploadField({
   // closure (which has access to the latest setUrl / setPending etc.).
   handleFileRef.current = handleFile;
 
-  /* ──▶ DIAG: logs AFTER every render so we can see whether the ref still
-         points at the SAME input element the listener was attached to ◀─ */
   useEffect(() => {
-    console.log(
-      `[DIAG] ${diagId} render#${diagRenders.current} ref=${diagTag(
-        fileInputRef.current,
-      )} pending=${pending} url=${url ? "set" : "empty"}`,
-    );
-  });
-  /* ──────────────────────────────────────────────────────────────── */
+    DIAG_MOUNTS += 1;
 
-  useEffect(() => {
     const input = fileInputRef.current;
 
-    /* ──▶ DIAG: effect mount — is the ref populated? ◀─ */
-    console.log(
-      `[DIAG] ${diagId} MOUNT ref=${diagTag(input)}${
-        input ? "" : " !!NULL-NO-LISTENER"
-      }`,
-    );
-    /* ──────────────────────────────────────────────────────── */
-    if (!input) return;
+    if (!input) {
+      setDiag("MOUNT", "err", "ref was NULL — effect bailed, NO listener attached");
+      return;
+    }
+
+    setDiag("MOUNT", "ok", `input mounted — element ${diagTag(input)} (#${DIAG_MOUNTS})`);
 
     const onNativeClick = (event: Event) => {
-      /* ──▶ DIAG B1: input actually activated by user ── */
-      console.log(
-        `[DIAG] ${diagId} B1 input CLICK el=${diagTag(
-          event.target as HTMLInputElement,
-        )}`,
+      setDiag(
+        "CLICK",
+        "ok",
+        `input click on element ${diagTag(event.target as HTMLInputElement)}`,
       );
-      /* ──────────────────────────────────────────────────── */
     };
 
     const onNativeChange = (event: Event) => {
       const target = event.target as HTMLInputElement;
       const files = target.files;
-      /* ──▶ DIAG B2/B3: native change fired + listener ran ── */
-      console.log(
-        `[DIAG] ${diagId} B2/B3 NATIVE change FIRED el=${diagTag(
-          target,
-        )} files.length=${files?.length ?? "n/a"} type=${
-          files?.[0]?.type ?? "(none)"
-        } size=${files?.[0]?.size ?? "n/a"}`,
+      setDiag(
+        "CHANGE",
+        "ok",
+        `native change fired on element ${diagTag(target)} — files.length=${
+          files?.length ?? "n/a"
+        }, type=${files?.[0]?.type ?? "(none)"}, size=${files?.[0]?.size ?? "n/a"}`,
       );
-      /* ──────────────────────────────────────────────────── */
-      handleFileRef.current(event as unknown as React.ChangeEvent<HTMLInputElement>);
+      handleFileRef.current(
+        event as unknown as React.ChangeEvent<HTMLInputElement>,
+      );
     };
-
-    /* ──▶ DIAG: document-level capture listener — catches a change event
-           even if it is dispatched on some OTHER element (or our listener
-           was somehow removed). Fires BEFORE the target's own listeners. ◀─ */
-    const onDocCapture = (event: Event) => {
-      const t = event.target as HTMLElement | null;
-      if (t && t.tagName === "INPUT" && (t as HTMLInputElement).type === "file") {
-        console.log(
-          `[DIAG] ${diagId} DOC-CAPTURE ${
-            event.type
-          } target-is-ours=${t === input} el=${diagTag(
-            t as HTMLInputElement,
-          )} ours=${diagTag(input)}`,
-        );
-      }
-    };
-    /* ──────────────────────────────────────────────────────────────── */
 
     input.addEventListener("click", onNativeClick);
     input.addEventListener("change", onNativeChange);
-    document.addEventListener("change", onDocCapture, true);
 
-    /* ──▶ DIAG: listener attached to WHICH element? ── */
-    console.log(`[DIAG] ${diagId} LISTENER attached el=${diagTag(input)}`);
-    /* ──────────────────────────────────────────────────────── */
+    setDiag(
+      "LISTENER",
+      "ok",
+      `native click+change listeners attached to element ${diagTag(input)}`,
+    );
 
     return () => {
-      /* ──▶ DIAG: cleanup — listener removed (would kill a pending event) ── */
-      console.log(`[DIAG] ${diagId} CLEANUP listener removed el=${diagTag(input)}`);
-      /* ──────────────────────────────────────────────────────── */
+      setDiag(
+        "LISTENER",
+        "err",
+        `effect cleanup — listeners REMOVED from element ${diagTag(input)} (component unmounting)`,
+      );
       input.removeEventListener("click", onNativeClick);
       input.removeEventListener("change", onNativeChange);
-      document.removeEventListener("change", onDocCapture, true);
     };
   }, []);
 
@@ -379,6 +515,9 @@ export function ImageUploadField({
           ) : null}
         </div>
       </div>
+
+      {/* TEMPORARY: visible event-chain diagnostics for the iPhone test. */}
+      <DiagPanel />
 
       <p className="text-xs text-ink-soft">
         {acceptHint} Saving your profile keeps the new image; removing it saves

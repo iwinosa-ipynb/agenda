@@ -12,6 +12,16 @@ import {
 import type { UserRole } from "@/types";
 
 /**
+ * TEMPORARY diagnostic marker — remove after the iPhone test.
+ *
+ * `@vercel/blob`'s client `upload()` does not expose the token-response
+ * headers to its caller, so the uploader issues a tiny follow-up probe to
+ * this same route and reads this header back to prove the server was
+ * reached. It carries no secrets — just the literal string "reached".
+ */
+const DIAG_HEADERS = { "x-diag-server": "reached" } as const;
+
+/**
  * Shared server-side engine for ALL Vercel Blob client-upload routes.
  *
  * One storage system, one security model — flows differ ONLY in which role
@@ -38,18 +48,10 @@ export async function handleImageUploadRequest(
     pathnamePrefix: string;
   },
 ): Promise<NextResponse> {
-  /* ──▶ DIAG B9: server received the request (temporary — remove after test) ◀─ */
-  console.log(
-    `[DIAG-SVR] B9 request received ${request.method} ${request.url} blobToken=${process.env.BLOB_READ_WRITE_TOKEN ? "set" : "MISSING"}`,
-  );
-  /* ─────────────────────────────────────────────────────────────────── */
-
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    /* ──▶ DIAG B9: 500 path ── */
-    console.log("[DIAG-SVR] !! B9 returning 500 — no BLOB_READ_WRITE_TOKEN");
     return NextResponse.json(
       { error: "Image storage is not configured on this server." },
-      { status: 500 },
+      { status: 500, headers: DIAG_HEADERS },
     );
   }
 
@@ -58,12 +60,13 @@ export async function handleImageUploadRequest(
   try {
     body = (await request.json()) as HandleUploadBody;
   } catch {
-    return NextResponse.json({ error: "Invalid request." }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid request." },
+      { status: 400, headers: DIAG_HEADERS },
+    );
   }
 
   try {
-    /* ──▶ DIAG B9: delegating to @vercel/blob handleUpload ── */
-    console.log(`[DIAG-SVR] B9 calling handleUpload pathnamePrefix=${options.pathnamePrefix}`);
     const jsonResponse = await handleUpload({
       body,
       request,
@@ -91,15 +94,11 @@ export async function handleImageUploadRequest(
       onUploadCompleted: async () => {},
     });
 
-    /* ──▶ DIAG B9/B10: token minted successfully ── */
-    console.log("[DIAG-SVR] B9/B10 handleUpload OK — token minted");
-    return NextResponse.json(jsonResponse);
+    return NextResponse.json(jsonResponse, { headers: DIAG_HEADERS });
   } catch (error) {
-    /* ──▶ DIAG B9: rejected (auth / pathname / content-type) ── */
-    console.error("[DIAG-SVR] !! B9 handleUpload THREW:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Upload rejected." },
-      { status: 400 },
+      { status: 400, headers: DIAG_HEADERS },
     );
   }
 }

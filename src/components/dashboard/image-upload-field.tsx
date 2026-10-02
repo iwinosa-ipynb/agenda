@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
 
 import { Avatar } from "@/components/dashboard/avatar";
@@ -116,6 +116,37 @@ export function ImageUploadField({
     }
   }
 
+  /*
+   * On iOS Safari React's synthetic onChange never fires for <input type="file">
+   * because the native `change` event dispatched by the OS picker does not
+   * bubble to the React root container (React 17+ delegates events on the root,
+   * not on `document`).  This was previously tracked upstream as
+   * https://github.com/facebook/react/issues/25308 ("event not bubbling to
+   * root on iOS Safari").  The user would tap Upload → pick a photo → the
+   * picker closes — and nothing else happens: no preview, no error.
+   *
+   * The fix: attach a NATIVE change listener directly on the <input> element
+   * via addEventListener, which runs regardless of React's event delegation.
+   * A ref always points at the latest handleFile closure so the listener can
+   * be registered once at mount and cleaned up at unmount.
+   */
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const handleFileRef = useRef(handleFile);
+  // Update the ref on every render so the listener always calls the latest
+  // closure (which has access to the latest setUrl / setPending etc.).
+  handleFileRef.current = handleFile;
+
+  useEffect(() => {
+    const input = fileInputRef.current;
+    if (!input) return;
+
+    const onNativeChange = (event: Event) =>
+      handleFileRef.current(event as unknown as React.ChangeEvent<HTMLInputElement>);
+
+    input.addEventListener("change", onNativeChange);
+    return () => input.removeEventListener("change", onNativeChange);
+  }, []);
+
   return (
     <div className="space-y-3">
       <span className="block text-sm font-medium text-ink">{label}</span>
@@ -167,7 +198,7 @@ export function ImageUploadField({
               ].join(",")}
               className="sr-only"
               disabled={pending}
-              onChange={handleFile}
+              ref={fileInputRef}
             />
           </label>
 

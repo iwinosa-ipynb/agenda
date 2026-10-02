@@ -12,6 +12,10 @@ import {
 } from "@/lib/profile-photo";
 import { cn } from "@/lib/utils";
 
+/* ──▶ DIAG: module-eval marker (proves the bundle actually executed) ◀─ */
+console.log("[DIAG] image-upload-field module evaluated");
+/* ──────────────────────────────────────────────────────────────────── */
+
 /**
  * Shared image uploader for Vercel Blob client uploads — used by the creator
  * profile photo AND the advertiser logo, so both flows have the identical UX:
@@ -57,21 +61,75 @@ export function ImageUploadField({
   const [pending, setPending] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
+  /* ──▶ DIAG BLOCK: identity + render tracking ◀─ */
+  const diagId = useRef(
+    `IMG-${Math.random().toString(36).slice(2, 8)}`,
+  ).current;
+  const diagRenders = useRef(0);
+  diagRenders.current += 1;
+
+  /** Tag a DOM node once so we can tell whether React replaced it. */
+  const diagTag = (el: HTMLInputElement | null): string => {
+    const tagged = el as unknown as { __diagId?: string } | null;
+    if (tagged && !tagged.__diagId) {
+      tagged.__diagId = `E${Math.random().toString(36).slice(2, 7)}`;
+    }
+    return tagged ? (tagged.__diagId ?? "?") : "null";
+  };
+  /* ──────────────────────────────────────────────────────────────── */
+
   async function handleFile(event: React.ChangeEvent<HTMLInputElement>) {
+    /* ──▶ DIAG B4: handleFile actually invoked ◀─ */
+    console.log(
+      `[DIAG] ${diagId} B4 handleFile CALLED target=${diagTag(
+        event.target as HTMLInputElement,
+      )}`,
+    );
+    /* ──────────────────────────────────────────────────────────── */
+
     const file = event.target.files?.[0];
+
+    /* ──▶ DIAG B5: File object exists? name/type/size ── */
+    console.log(
+      `[DIAG] ${diagId} B5 files.length=${
+        event.target.files?.length ?? 0
+      } name=${file?.name ?? "(none)"} type=${file?.type ?? "(none)"} size=${
+        file?.size ?? "n/a"
+      }`,
+    );
+    /* ──────────────────────────────────────────────────────────── */
 
     // Allow re-selecting the same file after a failure.
     event.target.value = "";
 
     if (!file) {
+      /* ──▶ DIAG: no File object — silent early return (looks like "nothing happened") ── */
+      console.log(
+        `[DIAG] ${diagId} !! B5 NO FILE — early return (no error shown to user)`,
+      );
+      /* ──────────────────────────────────────────────────────── */
       return;
     }
 
     setUploadError(null);
 
+    /* ──▶ DIAG B6: client-side validation ── */
+    const diagAllowed = isAllowedProfilePhotoContentType(file.type);
+    const diagSized = isWithinProfilePhotoSize(file.size);
+    console.log(
+      `[DIAG] ${diagId} B6 validation allowed=${diagAllowed} sized=${diagSized} type="${file.type}" size=${file.size}`,
+    );
+    /* ──────────────────────────────────────────────────────────── */
+
     if (!isAllowedProfilePhotoContentType(file.type)) {
       const isIphoneFormat =
         file.type === "image/heic" || file.type === "image/heif";
+
+      /* ──▶ DIAG: rejected by content type (an error message IS rendered) ── */
+      console.log(
+        `[DIAG] ${diagId} !! B6 REJECTED contentType (isIphoneFormat=${isIphoneFormat}) — error message set`,
+      );
+      /* ──────────────────────────────────────────────────────── */
 
       setUploadError(
         isIphoneFormat
@@ -82,13 +140,28 @@ export function ImageUploadField({
     }
 
     if (!isWithinProfilePhotoSize(file.size)) {
+      /* ──▶ DIAG: rejected by size (an error message IS rendered) ── */
+      console.log(
+        `[DIAG] ${diagId} !! B6 REJECTED size — error message set`,
+      );
+      /* ──────────────────────────────────────────────────────── */
+
       setUploadError(
         `Image must be 4 MB or smaller (max ${PROFILE_PHOTO_MAX_BYTES / (1024 * 1024)} MB).`,
       );
       return;
     }
 
+    /* ──▶ DIAG B7: pending state set (label should switch to "Uploading…") ── */
+    console.log(`[DIAG] ${diagId} B7 setPending(true)`);
+    /* ──────────────────────────────────────────────────────────── */
     setPending(true);
+
+    /* ──▶ DIAG B8: upload request initiated ── */
+    console.log(
+      `[DIAG] ${diagId} B8 upload() START prefix=${uploadPrefix} handleUploadUrl=${handleUploadUrl}`,
+    );
+    /* ──────────────────────────────────────────────────────────── */
 
     try {
       const blob = await upload(
@@ -101,17 +174,33 @@ export function ImageUploadField({
         },
       );
 
+      /* ──▶ DIAG B10: Blob upload succeeded ── */
+      console.log(`[DIAG] ${diagId} B10 upload() SUCCESS url=${blob.url}`);
+      /* ──────────────────────────────────────────────────────── */
+
+      /* ──▶ DIAG B12: state update → Avatar preview ── */
+      console.log(`[DIAG] ${diagId} B12 setUrl() → UI update`);
+      /* ──────────────────────────────────────────────────────── */
       setUrl(blob.url);
     } catch (uploadFailure) {
       // The failure is almost always the token route (auth, storage config,
       // rejected content type). Log it: on mobile there is no other way to
       // see what went wrong.
+      /* ──▶ DIAG: upload threw — covers B9 (server reached) vs network ── */
+      console.error(
+        `[DIAG] ${diagId} !! B8/B10 upload() THREW:`,
+        uploadFailure,
+      );
+      /* ──────────────────────────────────────────────────────── */
       console.error(`${label} upload failed`, uploadFailure);
 
       setUploadError(
         "Upload failed. Please check your connection and try again.",
       );
     } finally {
+      /* ──▶ DIAG B7: pending cleared ── */
+      console.log(`[DIAG] ${diagId} B7 setPending(false)`);
+      /* ──────────────────────────────────────────────────────── */
       setPending(false);
     }
   }
@@ -136,15 +225,87 @@ export function ImageUploadField({
   // closure (which has access to the latest setUrl / setPending etc.).
   handleFileRef.current = handleFile;
 
+  /* ──▶ DIAG: logs AFTER every render so we can see whether the ref still
+         points at the SAME input element the listener was attached to ◀─ */
+  useEffect(() => {
+    console.log(
+      `[DIAG] ${diagId} render#${diagRenders.current} ref=${diagTag(
+        fileInputRef.current,
+      )} pending=${pending} url=${url ? "set" : "empty"}`,
+    );
+  });
+  /* ──────────────────────────────────────────────────────────────── */
+
   useEffect(() => {
     const input = fileInputRef.current;
+
+    /* ──▶ DIAG: effect mount — is the ref populated? ◀─ */
+    console.log(
+      `[DIAG] ${diagId} MOUNT ref=${diagTag(input)}${
+        input ? "" : " !!NULL-NO-LISTENER"
+      }`,
+    );
+    /* ──────────────────────────────────────────────────────── */
     if (!input) return;
 
-    const onNativeChange = (event: Event) =>
-      handleFileRef.current(event as unknown as React.ChangeEvent<HTMLInputElement>);
+    const onNativeClick = (event: Event) => {
+      /* ──▶ DIAG B1: input actually activated by user ── */
+      console.log(
+        `[DIAG] ${diagId} B1 input CLICK el=${diagTag(
+          event.target as HTMLInputElement,
+        )}`,
+      );
+      /* ──────────────────────────────────────────────────── */
+    };
 
+    const onNativeChange = (event: Event) => {
+      const target = event.target as HTMLInputElement;
+      const files = target.files;
+      /* ──▶ DIAG B2/B3: native change fired + listener ran ── */
+      console.log(
+        `[DIAG] ${diagId} B2/B3 NATIVE change FIRED el=${diagTag(
+          target,
+        )} files.length=${files?.length ?? "n/a"} type=${
+          files?.[0]?.type ?? "(none)"
+        } size=${files?.[0]?.size ?? "n/a"}`,
+      );
+      /* ──────────────────────────────────────────────────── */
+      handleFileRef.current(event as unknown as React.ChangeEvent<HTMLInputElement>);
+    };
+
+    /* ──▶ DIAG: document-level capture listener — catches a change event
+           even if it is dispatched on some OTHER element (or our listener
+           was somehow removed). Fires BEFORE the target's own listeners. ◀─ */
+    const onDocCapture = (event: Event) => {
+      const t = event.target as HTMLElement | null;
+      if (t && t.tagName === "INPUT" && (t as HTMLInputElement).type === "file") {
+        console.log(
+          `[DIAG] ${diagId} DOC-CAPTURE ${
+            event.type
+          } target-is-ours=${t === input} el=${diagTag(
+            t as HTMLInputElement,
+          )} ours=${diagTag(input)}`,
+        );
+      }
+    };
+    /* ──────────────────────────────────────────────────────────────── */
+
+    input.addEventListener("click", onNativeClick);
     input.addEventListener("change", onNativeChange);
-    return () => input.removeEventListener("change", onNativeChange);
+    document.addEventListener("change", onDocCapture, true);
+
+    /* ──▶ DIAG: listener attached to WHICH element? ── */
+    console.log(`[DIAG] ${diagId} LISTENER attached el=${diagTag(input)}`);
+    /* ──────────────────────────────────────────────────────── */
+
+    return () => {
+      /* ──▶ DIAG: cleanup — listener removed (would kill a pending event) ── */
+      console.log(`[DIAG] ${diagId} CLEANUP listener removed el=${diagTag(input)}`);
+      /* ──────────────────────────────────────────────────────── */
+      input.removeEventListener("click", onNativeClick);
+      input.removeEventListener("change", onNativeChange);
+      document.removeEventListener("change", onDocCapture, true);
+    };
   }, []);
 
   return (

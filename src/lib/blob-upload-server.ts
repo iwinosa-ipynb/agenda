@@ -38,7 +38,15 @@ export async function handleImageUploadRequest(
     pathnamePrefix: string;
   },
 ): Promise<NextResponse> {
+  /* ──▶ DIAG B9: server received the request (temporary — remove after test) ◀─ */
+  console.log(
+    `[DIAG-SVR] B9 request received ${request.method} ${request.url} blobToken=${process.env.BLOB_READ_WRITE_TOKEN ? "set" : "MISSING"}`,
+  );
+  /* ─────────────────────────────────────────────────────────────────── */
+
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    /* ──▶ DIAG B9: 500 path ── */
+    console.log("[DIAG-SVR] !! B9 returning 500 — no BLOB_READ_WRITE_TOKEN");
     return NextResponse.json(
       { error: "Image storage is not configured on this server." },
       { status: 500 },
@@ -54,6 +62,8 @@ export async function handleImageUploadRequest(
   }
 
   try {
+    /* ──▶ DIAG B9: delegating to @vercel/blob handleUpload ── */
+    console.log(`[DIAG-SVR] B9 calling handleUpload pathnamePrefix=${options.pathnamePrefix}`);
     const jsonResponse = await handleUpload({
       body,
       request,
@@ -81,8 +91,12 @@ export async function handleImageUploadRequest(
       onUploadCompleted: async () => {},
     });
 
+    /* ──▶ DIAG B9/B10: token minted successfully ── */
+    console.log("[DIAG-SVR] B9/B10 handleUpload OK — token minted");
     return NextResponse.json(jsonResponse);
   } catch (error) {
+    /* ──▶ DIAG B9: rejected (auth / pathname / content-type) ── */
+    console.error("[DIAG-SVR] !! B9 handleUpload THREW:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Upload rejected." },
       { status: 400 },

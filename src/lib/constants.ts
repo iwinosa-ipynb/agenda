@@ -27,7 +27,7 @@ export const CATEGORY_LABELS: Record<Category, string> = {
   FASHION: "Fashion",
   BEAUTY: "Beauty",
   FITNESS: "Fitness",
-  TECH: "Tech",
+  TECH: "Technology",
   GAMING: "Gaming",
   FOOD: "Food",
   TRAVEL: "Travel",
@@ -37,6 +37,11 @@ export const CATEGORY_LABELS: Record<Category, string> = {
   SPORTS: "Sports",
   EDUCATION: "Education",
   FINANCE: "Finance",
+  WEB3: "Web3",
+  POLITICS: "Politics",
+  HEALTH: "Health",
+  BUSINESS: "Business",
+  ENTERTAINMENT: "Entertainment",
   OTHER: "Other",
 };
 

@@ -5,13 +5,15 @@ import Link from "next/link";
 
 import { convertSelectedCandidateAction } from "@/app/dashboard/_actions/managed-brief";
 import { Button } from "@/components/ui/button";
-// Browser-safe enum-only module (no Prisma runtime / node:module). Importing
-// the barrel here pulled the full Prisma runtime into the client graph and
-// panicked Turbopack's browser chunking on this page.
-import { Category } from "@/generated/prisma/enums";
+// Category labels come from the canonical CATEGORY_LABELS map — the same
+// source every other category UI uses — so this form never renders raw enum
+// values (FASHION, TECH). `constants.ts` imports its enum types with
+// `import type`, which is erased at compile time, so this pulls no Prisma
+// runtime into the client graph.
+import { CATEGORY_LABELS } from "@/lib/constants";
 import type { ActionResult } from "@/types";
 
-const CATEGORY_OPTIONS = Object.values(Category);
+const CATEGORY_OPTIONS = Object.entries(CATEGORY_LABELS);
 
 type ConversionResult = {
   campaignId: string;
@@ -111,9 +113,9 @@ export function ManagedBriefConversionForm({
                 <option value="" disabled>
                   Choose a category…
                 </option>
-                {CATEGORY_OPTIONS.map((category) => (
-                  <option key={category} value={category}>
-                    {category}
+                {CATEGORY_OPTIONS.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
                   </option>
                 ))}
               </select>

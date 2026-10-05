@@ -37,6 +37,8 @@ enum Category {
   FASHION
   BEAUTY
   FITNESS
+  // Human-readable label is "Technology" (CATEGORY_LABELS). The enum value
+  // stays TECH: renaming it would be a destructive data migration.
   TECH
   GAMING
   FOOD
@@ -47,6 +49,11 @@ enum Category {
   SPORTS
   EDUCATION
   FINANCE
+  WEB3
+  POLITICS
+  HEALTH
+  BUSINESS
+  ENTERTAINMENT
   OTHER
 }
 

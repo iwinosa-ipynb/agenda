@@ -57,11 +57,11 @@ export function DashboardNav({
             href={item.href}
             aria-current={isActive ? "page" : undefined}
             className={cn(
-              "flex items-center rounded-lg px-3 py-2 text-sm font-medium transition-[color,background-color,scale] duration-150 ease-out pressed:scale-[0.97] motion-reduce:pressed:scale-100",
+              "flex items-center rounded-lg px-3 py-2 text-sm font-medium transition-[color,background-color,border-color,scale] duration-150 ease-out pressed:scale-[0.97] motion-reduce:pressed:scale-100",
               orientation === "horizontal" && "shrink-0 whitespace-nowrap",
               isActive
-                ? "bg-ink text-canvas pressed:bg-ink/70"
-                : "text-ink-soft hover:bg-surface-muted hover:text-ink pressed:bg-line pressed:text-ink",
+                ? "bg-ink text-canvas pressed:bg-ink-pressed"
+                : "text-ink-soft hover:bg-surface-muted hover:text-ink pressed:bg-line-strong pressed:text-ink",
             )}
           >
             {item.label}

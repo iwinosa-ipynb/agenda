@@ -116,7 +116,7 @@ export async function AdvertiserOverview() {
           <Link
             key={link.href}
             href={link.href}
-            className="group block h-full rounded-xl transition-transform duration-150 ease-out pressed:scale-[0.99] motion-reduce:pressed:scale-100"
+            className="group block h-full rounded-xl transition-[color,background-color,border-color,scale] duration-150 ease-out pressed:scale-[0.99] motion-reduce:pressed:scale-100"
           >
             <Card className="flex h-full items-center justify-between p-5 transition-colors group-hover:border-line-strong">
               <span className="text-sm font-medium text-ink">

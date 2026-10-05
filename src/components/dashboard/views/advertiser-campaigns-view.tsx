@@ -62,7 +62,7 @@ function CampaignRow({ campaign }: { campaign: AdvertiserCampaignSummary }) {
   return (
     <Link
       href={`/dashboard/campaigns/${campaign.id}`}
-      className="group block rounded-xl transition-transform duration-150 ease-out pressed:scale-[0.99] motion-reduce:pressed:scale-100"
+      className="group block rounded-xl transition-[color,background-color,border-color,scale] duration-150 ease-out pressed:scale-[0.99] motion-reduce:pressed:scale-100"
     >
       <Card className="p-5 transition-colors group-hover:border-line-strong">
         <div className="flex flex-wrap items-start justify-between gap-4">

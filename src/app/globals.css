@@ -3,12 +3,16 @@
 /*
   Shared pressed-state variant.
 
-  iOS Safari does not apply the CSS `:active` pseudo-class to a tap unless the
-  page has touch handling (see `PressFeedback`), so a bare `active:` utility is
-  unreliable on iPhone. `pressed:` matches either the real `:active` state OR an
-  explicit `data-pressed` attribute, which the shared `PressFeedback` listener
-  sets on `pointerdown`/`touchstart` and clears on release. The `:not(:disabled)`
-  guard keeps disabled/loading buttons on their existing disabled appearance.
+  A bare `active:` utility is not dependable on touch. iOS Safari only honours
+  the `:active` pseudo-class once the page demonstrably handles touch, and it
+  does not match every structure (a `<label>` wrapping a hidden radio, a custom
+  `role="button"` wrapper). `pressed:` therefore matches either the real
+  `:active` state OR the `data-pressed` attribute that the shared
+  `<PressFeedback>` listener sets on the nearest interactive ancestor while a
+  finger is down and removes on release.
+
+  The `:not(:disabled)` guard keeps disabled/loading buttons on their existing
+  disabled appearance instead of flashing a pressed colour.
 */
 @custom-variant pressed (&:is(:active, [data-pressed], [data-pressed] *):not(:disabled));
 
@@ -23,6 +27,13 @@
   --color-surface: #ffffff;
   --color-surface-muted: #f1eee8;
   --color-ink: #131210;
+  /* "Finger is down" shades. Every one of these is chosen to be a large,
+     obvious step away from its resting colour — the previous attempt used
+     near-black-on-near-black deltas that no one could see on a phone. The dark
+     primary button cannot go darker than near-black, so it steps *lighter*,
+     which is the conventional pressed cue for a dark surface; light-surface
+     variants step darker. */
+  --color-ink-pressed: #55524c;
   --color-ink-soft: #5f5b53;
   --color-ink-faint: #8b877e;
   --color-line: #e6e1d8;
@@ -32,9 +43,9 @@
   --color-accent-soft: #e9f2ec;
   /* Dedicated "finger is down" shades, darker than both the base and hover
      colours, so a press is visible even after a hover/tap-left-behind state. */
-  --color-accent-pressed: #053d1e;
+  --color-accent-pressed: #042e17;
   --color-danger: #b42318;
-  --color-danger-pressed: #7f150e;
+  --color-danger-pressed: #6f130b;
   --color-danger-soft: #fdeceb;
   --color-warning: #8a5a06;
   --color-warning-soft: #fbf1dc;
@@ -74,6 +85,19 @@
     background-color: var(--color-canvas);
     color: var(--color-ink);
     font-family: var(--font-sans);
+  }
+
+  /*
+    iOS Safari paints its own grey tap-highlight flash over tappable elements,
+    which competes with (and can mask) the shared pressed state below. Turn it
+    off so the only feedback the user sees is ours.
+  */
+  a,
+  button,
+  label,
+  [role="button"],
+  summary {
+    -webkit-tap-highlight-color: transparent;
   }
 
   h1,

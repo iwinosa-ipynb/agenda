@@ -3,76 +3,120 @@
 import { useEffect } from "react";
 
 /**
- * Reliable press feedback for touch devices (notably iOS Safari).
+ * Shared "finger is down" feedback for every interactive element in Agenda.
  *
- * Two things are needed to show a "finger is down" state on iPhone:
+ * Why this exists: a bare CSS `:active` rule is not dependable on iOS Safari.
+ * iOS only honours `:active` for an element once the page demonstrably handles
+ * touch, and there are documented cases (labels wrapping hidden inputs, list
+ * items, custom role="button" wrappers) where it never matches at all. So we do
+ * not depend on `:active` for the visual; we drive it ourselves:
  *
- * 1. iOS Safari does not apply the CSS `:active` pseudo-class on tap unless the
- *    page actually handles touch. Registering a passive `touchstart` listener
- *    on `document` (we do it here) is the documented switch that turns `:active`
- *    back on.
- * 2. Even with `:active` enabled it is still not applied to every element (for
- *    example a `<label>` wrapping a hidden radio). So we also mark the pressed
- *    element with `data-pressed`, which the `pressed:` variant in globals.css
- *    matches. On `pointerdown`/`touchstart` we walk up to the nearest interactive
- *    ancestor (`button`, `a`, `label`, `[role="button"]`) and set the attribute;
- *    it is cleared on release/cancel and on scroll.
+ * 1. Registering a `touchstart` listener is the documented switch that turns
+ *    iOS's `:active` back on, so keep it.
+ * 2. On press we set `data-pressed` on the nearest interactive ancestor. The
+ *    `pressed:` variant in globals.css matches `:active` OR `[data-pressed]`,
+ *    so the press shows even where `:active` would not have applied.
  *
- * The listeners are passive and never call `preventDefault`, so no default
- * browser behaviour, navigation or business logic is altered. Rendering nothing
- * keeps this out of the server components' way.
+ * All listeners are passive and none of them call `preventDefault`, so taps,
+ * scrolling, text selection, form submission and navigation are untouched. This
+ * component renders nothing and contains no business logic.
  */
+
+/** Elements that should visibly react when a finger lands on them. */
+const PRESSABLE_SELECTOR =
+  'button, a[href], label, [role="button"], summary, [data-pressable]';
+
+/** Elements that must keep their disabled/unavailable appearance. */
+function isInert(element: HTMLElement): boolean {
+  return (
+    element.hasAttribute("disabled") ||
+    element.getAttribute("aria-disabled") === "true"
+  );
+}
+
+/**
+ * If a `touchend` is ever missed (system gesture, interrupted scroll, the tab
+ * losing focus), the button would stay dark forever. This bounds the press.
+ */
+const PRESS_TIMEOUT_MS = 1500;
+
 export function PressFeedback() {
   useEffect(() => {
-    const PRESSED_SELECTOR =
-      'button, a, label, [role="button"], [data-pressable]';
-    const ATTRIBUTE = "data-pressed";
+    let pressed: HTMLElement | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    const resolvePressable = (target: EventTarget | null): HTMLElement | null => {
-      if (!(target instanceof Element)) {
-        return null;
+    const release = () => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
       }
 
-      const element = target.closest(PRESSED_SELECTOR);
-      return element instanceof HTMLElement ? element : null;
-    };
-
-    const clearPressed = () => {
-      document
-        .querySelectorAll<HTMLElement>(`[${ATTRIBUTE}]`)
-        .forEach((element) => element.removeAttribute(ATTRIBUTE));
+      if (pressed) {
+        pressed.removeAttribute("data-pressed");
+        pressed = null;
+      }
     };
 
     const press = (event: Event) => {
-      const element = resolvePressable(event.target);
+      const target = event.target;
 
-      // A new gesture replaces any previous press (e.g. a second finger).
-      clearPressed();
-
-      if (!element || element.hasAttribute("disabled")) {
+      if (!(target instanceof Element)) {
+        release();
         return;
       }
 
-      element.setAttribute(ATTRIBUTE, "");
+      const element = target.closest<HTMLElement>(PRESSABLE_SELECTOR);
+
+      // A new gesture supersedes any previous press (e.g. a second finger, or
+      // sliding off one button onto another).
+      release();
+
+      if (!element || isInert(element)) {
+        return;
+      }
+
+      element.setAttribute("data-pressed", "");
+      pressed = element;
+
+      timer = setTimeout(release, PRESS_TIMEOUT_MS);
     };
 
-    document.addEventListener("touchstart", press, { passive: true });
-    document.addEventListener("pointerdown", press, { passive: true });
-    document.addEventListener("touchend", clearPressed, { passive: true });
-    document.addEventListener("touchcancel", clearPressed, { passive: true });
-    document.addEventListener("pointerup", clearPressed, { passive: true });
-    document.addEventListener("pointercancel", clearPressed, { passive: true });
-    window.addEventListener("scroll", clearPressed, { passive: true });
+    // Capture phase on `window` so the iOS `:active` enabler and the attribute
+    // are in place before any element-level handler can stop propagation.
+    const pressOptions: AddEventListenerOptions = {
+      capture: true,
+      passive: true,
+    };
+
+    window.addEventListener("touchstart", press, pressOptions);
+    window.addEventListener("pointerdown", press, pressOptions);
+
+    // Release: bubble phase is enough and keeps the handler off the hot path.
+    const releaseOptions: AddEventListenerOptions = { passive: true };
+
+    window.addEventListener("touchend", release, releaseOptions);
+    window.addEventListener("touchcancel", release, releaseOptions);
+    window.addEventListener("pointerup", release, releaseOptions);
+    window.addEventListener("pointercancel", release, releaseOptions);
+    // The finger sliding off the button, or the page being scrolled, ends the
+    // press rather than leaving the button stuck in its pressed colour.
+    window.addEventListener("touchmove", release, releaseOptions);
+    window.addEventListener("scroll", release, releaseOptions);
+    window.addEventListener("blur", release, releaseOptions);
+    document.addEventListener("visibilitychange", release, releaseOptions);
 
     return () => {
-      document.removeEventListener("touchstart", press);
-      document.removeEventListener("pointerdown", press);
-      document.removeEventListener("touchend", clearPressed);
-      document.removeEventListener("touchcancel", clearPressed);
-      document.removeEventListener("pointerup", clearPressed);
-      document.removeEventListener("pointercancel", clearPressed);
-      window.removeEventListener("scroll", clearPressed);
-      clearPressed();
+      window.removeEventListener("touchstart", press, pressOptions);
+      window.removeEventListener("pointerdown", press, pressOptions);
+      window.removeEventListener("touchend", release, releaseOptions);
+      window.removeEventListener("touchcancel", release, releaseOptions);
+      window.removeEventListener("pointerup", release, releaseOptions);
+      window.removeEventListener("pointercancel", release, releaseOptions);
+      window.removeEventListener("touchmove", release, releaseOptions);
+      window.removeEventListener("scroll", release, releaseOptions);
+      window.removeEventListener("blur", release, releaseOptions);
+      document.removeEventListener("visibilitychange", release, releaseOptions);
+      release();
     };
   }, []);
 

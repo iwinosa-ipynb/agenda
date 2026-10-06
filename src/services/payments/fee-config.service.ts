@@ -15,8 +15,12 @@ import type { PlatformFeeRate } from "@/services/payments/fee-engine";
  *   MILESTONE_ADVERTISER_FEE — advertiser service fee EARNED per completed
  *                              milestone (5% under the locked 13B rules).
  *   MILESTONE_CREATOR_FEE    — creator marketplace commission EARNED per
- *                              completed milestone (10% under the locked
- *                              rules).
+ *                              completed milestone (7.5% under the locked
+ *                              rules). It is DEDUCTED from the creator's
+ *                              gross milestone amount at settlement: escrow is
+ *                              debited by the gross amount only, and the
+ *                              commission is withheld against the creator's
+ *                              receivable, so the creator is paid net.
  *
  * If a row is missing the result is explicitly FEE_NOT_CONFIGURED — the
  * system never invents a fee and never defaults silently to 0. Percentages

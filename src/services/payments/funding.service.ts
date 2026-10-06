@@ -5,6 +5,7 @@ import { toMinorUnits, isPositiveMinor } from "@/lib/money";
 import type { PrepareFundingInput } from "@/validation/funding";
 import { createObligationForAgreement } from "@/services/payments/obligation.service";
 import { planMilestonesForAgreement } from "@/services/payments/milestone.service";
+import type { AgreementFeeMode } from "@/services/payments/fee-engine";
 
 /**
  * Stage 14A — advertiser funding preparation.
@@ -295,10 +296,24 @@ export async function prepareFundingForAgreement(
   }
 
   // ---- 4. ONE transaction: 13A obligation + 13B milestones. ----
+
+  // The two advertiser fee mechanisms are mutually exclusive, and which one
+  // applies is decided HERE, once, from the number of explicit milestone
+  // terms the advertiser submitted:
+  //
+  //   ONE term  -> a single-payment agreement. The 5% AGREEMENT_FUNDING fee
+  //                is charged UPFRONT (inside advertiserTotalMinor) and the
+  //                per-milestone advertiser fee is zero.
+  //   2+ terms  -> a multi-milestone agreement. The advertiser funds ONLY the
+  //                creator's agreed money (platformFeeMinor = 0) and pays the
+  //                5% MILESTONE_ADVERTISER_FEE per milestone at settlement,
+  //                collected from the advertiser and never out of escrow.
+  const feeMode: AgreementFeeMode = terms.length === 1 ? "SINGLE_PAYMENT" : "MILESTONE";
   try {
     const prepared = await prisma.$transaction(async (tx) => {
       const obligation = await createObligationForAgreement(agreement.id, {
         tx,
+        feeMode,
       });
 
       if (!obligation.ok) {
@@ -335,6 +350,7 @@ export async function prepareFundingForAgreement(
             dueDate: term.dueDate,
             creatorAmount: term.creatorAmount,
           })),
+          feeMode,
         },
         { tx },
       );

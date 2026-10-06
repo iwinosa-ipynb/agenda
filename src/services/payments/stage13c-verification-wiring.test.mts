@@ -1326,13 +1326,29 @@ describe("Stage 13C — timer expiry, corrections & settlement", () => {
 
     assert.equal(payout?.amountMinor, 30000000n);
 
-    // 5% advertiser fee (₦15,000) + 10% creator commission (₦30,000) of M2.
-    const fees = db.ledgerEntry
-      .filter((e) => e.entryType === "PLATFORM_FEE")
-      .map((e) => e.amountMinor as bigint)
-      .sort((a, b) => (a > b ? 1 : a < b ? -1 : 0));
+    // Asserted per revenue ACCOUNT so the commission withheld from the
+    // creator's own receivable is not double-counted as revenue.
+    const revenue = db.ledgerEntry
+      .filter((e) => e.account === "platform:revenue")
+      .map((e) => e.amountMinor as bigint);
+    const commission = db.ledgerEntry
+      .filter((e) => e.account === "platform:creator-commission")
+      .map((e) => e.amountMinor as bigint);
 
-    assert.deepEqual(fees, [1500000n, 3000000n]);
+    assert.deepEqual(revenue, [1500000n]); // 5% advertiser fee of M2's 300k
+    assert.deepEqual(commission, [3000000n]); // creator commission of M2's 300k
+
+    // The commission is withheld from the creator, so the creator receivable
+    // nets down while escrow is debited only the gross milestone amount.
+    const withheld = db.ledgerEntry.filter(
+      (e) => String(e.account).startsWith("creator:") && e.direction === "DEBIT",
+    );
+
+    assert.deepEqual(withheld.map((e) => e.amountMinor as bigint), [3000000n]);
+
+    const escrow = db.ledgerEntry.find((e) => e.account === "platform:escrow");
+
+    assert.equal(escrow?.amountMinor, 30000000n); // gross only
 
     // M1 and M3 earned nothing.
     assert.equal(db.milestone[0].status, "PENDING");

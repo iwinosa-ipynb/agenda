@@ -26,9 +26,13 @@ import { getActiveRecipientForCreator } from "@/services/payments/payout-recipie
  *     failed or REVERSED — and a reversal writes compensating ledger entries.
  *
  * MONEY DISCIPLINE:
- *   - the transfer amount is EXACTLY milestone.creatorAmountMinor — never
- *     advertiserTotalMinor, never any fee (fees were already credited to the
- *     platform at settlement);
+ *   - the transfer amount is the creator's NET proceeds: the frozen
+ *     milestone.creatorAmountMinor MINUS the marketplace commission already
+ *     withheld at settlement (milestone.creatorCommissionMinor). Escrow itself
+ *     is debited only by the gross milestone amount, so paying net here is
+ *     what closes the creator's liability exactly;
+ *   - it is never advertiserTotalMinor, and never gross creatorAmountMinor —
+ *     the commission was already withheld against the creator's receivable;
  *   - "paid" is provider-confirmed only: transfer creation returning OK marks
  *     the attempt PENDING, never PAID. The receivable-clearing ledger entry
  *     (CREATOR_PAYOUT DEBIT creator receivable / CREDIT provider settlement)
@@ -75,6 +79,22 @@ export function logicalPayoutRef(milestoneId: string): string {
 }
 
 /**
+ * The creator's NET proceeds for a settled milestone.
+ *
+ * Escrow is debited EXACTLY ONCE at settlement by the GROSS frozen milestone
+ * amount. The 7.5% marketplace commission is withheld in that same settlement
+ * event by a debit against the creator's own receivable, so what the creator is
+ * left owed — and therefore what is transferred here — is the gross amount
+ * minus the commission. Escrow is never debited a second time for it.
+ */
+function netCreatorMinor(milestone: {
+  creatorAmountMinor: bigint;
+  creatorCommissionMinor: bigint;
+}): bigint {
+  return milestone.creatorAmountMinor - milestone.creatorCommissionMinor;
+}
+
+/**
  * Initiate (or resume) the creator payout for one RELEASED milestone.
  *
  * System-triggered (called from the settlement paths / reconciliation) —
@@ -106,6 +126,7 @@ export async function initiateMilestonePayout(
       status: true,
       creatorId: true,
       creatorAmountMinor: true,
+      creatorCommissionMinor: true,
       currency: true,
       agreementId: true,
     },
@@ -197,7 +218,7 @@ export async function initiateMilestonePayout(
     agreementId: milestone.agreementId,
     obligationId: obligation.id,
     creatorId: milestone.creatorId,
-    amountMinor: milestone.creatorAmountMinor,
+    amountMinor: netCreatorMinor(milestone),
     currency: milestone.currency,
   });
 
@@ -342,7 +363,7 @@ export async function initiateMilestonePayout(
         provider: "paystack",
         providerReference,
         providerStatus: "PENDING",
-        amountMinor: milestone.creatorAmountMinor,
+        amountMinor: netCreatorMinor(milestone),
         currency: milestone.currency,
         metadata: {
           kind: "creator_payout",
@@ -412,7 +433,7 @@ export async function initiateMilestonePayout(
 
   const transfer = await provider.createPayout({
     creatorId: milestone.creatorId,
-    amountMinor: milestone.creatorAmountMinor,
+    amountMinor: netCreatorMinor(milestone),
     currency: milestone.currency,
     reference: providerReference,
     recipientCode: recipient.recipientCode,
@@ -444,7 +465,7 @@ export async function initiateMilestonePayout(
             payoutRef,
             attemptReference: providerReference,
             attemptNumber,
-            amountMinor: milestone.creatorAmountMinor.toString(),
+            amountMinor: netCreatorMinor(milestone).toString(),
             reason: (transfer.reason ?? "").slice(0, 300),
           },
           idempotencyKey: `evt:${providerReference}:payout_failed`,
@@ -600,7 +621,13 @@ export async function settlePayoutFromProviderEvidence(
 
   const milestone = await prisma.milestone.findUnique({
     where: { id: attempt.milestoneId },
-    select: { creatorId: true, creatorAmountMinor: true, currency: true, agreementId: true },
+    select: {
+      creatorId: true,
+      creatorAmountMinor: true,
+      creatorCommissionMinor: true,
+      currency: true,
+      agreementId: true,
+    },
   });
 
   if (!milestone) {
@@ -608,7 +635,7 @@ export async function settlePayoutFromProviderEvidence(
   }
 
   // Defense in depth: the settled amount must be the frozen creator amount.
-  if (attempt.amountMinor !== milestone.creatorAmountMinor) {
+  if (attempt.amountMinor !== netCreatorMinor(milestone)) {
     return { ok: false, note: "Attempt amount does not match the frozen milestone amount — refusing to settle." };
   }
 
@@ -625,7 +652,7 @@ export async function settlePayoutFromProviderEvidence(
         data: {
           account: `creator:${milestone.creatorId}:receivable`,
           direction: "DEBIT",
-          amountMinor: milestone.creatorAmountMinor,
+          amountMinor: netCreatorMinor(milestone),
           currency: milestone.currency,
           entryType: "CREATOR_PAYOUT",
           agreementId: milestone.agreementId,
@@ -642,7 +669,7 @@ export async function settlePayoutFromProviderEvidence(
         data: {
           account: "provider:paystack:settlement",
           direction: "CREDIT",
-          amountMinor: milestone.creatorAmountMinor,
+          amountMinor: netCreatorMinor(milestone),
           currency: milestone.currency,
           entryType: "CREATOR_PAYOUT",
           agreementId: milestone.agreementId,
@@ -677,7 +704,7 @@ export async function settlePayoutFromProviderEvidence(
           metadata: {
             payoutRef: payout.payoutRef,
             attemptReference: providerReference,
-            amountMinor: milestone.creatorAmountMinor.toString(),
+            amountMinor: netCreatorMinor(milestone).toString(),
           },
           idempotencyKey: `evt:${providerReference}:payout_completed`,
         },
@@ -712,7 +739,7 @@ export async function settlePayoutFromProviderEvidence(
           metadata: {
             payoutRef: payout.payoutRef,
             attemptReference: providerReference,
-            amountMinor: milestone.creatorAmountMinor.toString(),
+            amountMinor: netCreatorMinor(milestone).toString(),
           },
           idempotencyKey: `evt:${providerReference}:payout_failed`,
         },
@@ -731,7 +758,7 @@ export async function settlePayoutFromProviderEvidence(
       data: {
         account: "provider:paystack:settlement",
         direction: "DEBIT",
-        amountMinor: milestone.creatorAmountMinor,
+        amountMinor: netCreatorMinor(milestone),
         currency: milestone.currency,
         entryType: "CREATOR_PAYOUT",
         agreementId: milestone.agreementId,
@@ -748,7 +775,7 @@ export async function settlePayoutFromProviderEvidence(
       data: {
         account: `creator:${milestone.creatorId}:receivable`,
         direction: "CREDIT",
-        amountMinor: milestone.creatorAmountMinor,
+        amountMinor: netCreatorMinor(milestone),
         currency: milestone.currency,
         entryType: "CREATOR_PAYOUT",
         agreementId: milestone.agreementId,
@@ -781,7 +808,7 @@ export async function settlePayoutFromProviderEvidence(
         metadata: {
           payoutRef: payout.payoutRef,
           attemptReference: providerReference,
-          amountMinor: milestone.creatorAmountMinor.toString(),
+          amountMinor: netCreatorMinor(milestone).toString(),
         },
         idempotencyKey: `evt:${providerReference}:payout_reversed`,
       },

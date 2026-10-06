@@ -504,7 +504,11 @@ enum FeeConfigStatus {
 //   MILESTONE_ADVERTISER_FEE — advertiser service fee earned per COMPLETED
 //                             milestone (5% under the locked Stage 13B rules).
 //   MILESTONE_CREATOR_FEE    — creator marketplace commission earned per
-//                             COMPLETED milestone (10% under the locked rules).
+//                             COMPLETED milestone (7.5% under the locked rules).
+//                             It is DEDUCTED from the creator's gross milestone
+//                             amount: escrow is debited by the gross amount
+//                             only, and the commission is withheld against the
+//                             creator's receivable so the payout is net.
 // Fees are only EARNED when the corresponding milestone settles — future/
 // cancelled milestones never generate Agenda revenue.
 enum FeeConfigType {
@@ -586,9 +590,11 @@ model CreatorPayout {
   // recipient; never taken from client input.
   creatorId    String
 
-  // Frozen transfer amount: exactly the milestone's creator amount. Fees are
-  // NEVER part of this figure (they were already credited to the platform at
-  // settlement).
+  // Frozen transfer amount: the milestone's creator amount MINUS the creator
+  // marketplace commission withheld at settlement (gross - 7.5%). Escrow is
+  // debited by the GROSS milestone amount, so this net figure is what closes
+  // the creator's receivable exactly. The advertiser's fees are never part of
+  // it; they are charged to the advertiser, never to the creator.
   amountMinor  BigInt
   currency     String
 

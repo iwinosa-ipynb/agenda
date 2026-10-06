@@ -435,8 +435,12 @@ describe("Stage 14A — advertiser funding preparation", () => {
 
       if (result.ok) {
         assert.equal(result.creatorAmountMinor, 90000000n); // ₦900,000
-        assert.equal(result.platformFeeMinor, 13500000n); // 15% AGREEMENT_FUNDING
-        assert.equal(result.advertiserTotalMinor, 103500000n);
+        // A THREE-milestone agreement is MILESTONE mode: the advertiser funds
+        // ONLY the creator's agreed money. NO AGREEMENT_FUNDING fee is charged
+        // upfront — the 5% MILESTONE_ADVERTISER_FEE is collected per milestone
+        // at settlement instead, so the two 5% fees can never both apply.
+        assert.equal(result.platformFeeMinor, 0n);
+        assert.equal(result.advertiserTotalMinor, 90000000n);
         assert.equal(result.currency, "NGN");
         assert.equal(result.milestones.length, 3);
         assert.deepEqual(
@@ -447,6 +451,35 @@ describe("Stage 14A — advertiser funding preparation", () => {
 
       assert.equal(db.financialObligation.length, 1);
       assert.equal(db.milestone.length, 3);
+      // No funding-fee config is snapshotted onto a MILESTONE obligation.
+      assert.equal(db.financialObligation[0].feeConfigId, null);
+    });
+
+    it("a SINGLE-milestone agreement charges the AGREEMENT_FUNDING fee upfront and no milestone fee", async () => {
+      const agreement = addAgreement();
+
+      const result = await fundingService.prepareFundingForAgreement(
+        agreement.id as string,
+        ADV,
+        { milestones: wholeAmountTerm() },
+      );
+
+      assert.equal(result.ok, true);
+
+      if (result.ok) {
+        assert.equal(result.creatorAmountMinor, 90000000n); // ₦900,000
+        assert.equal(result.platformFeeMinor, 13500000n); // 15% AGREEMENT_FUNDING
+        assert.equal(result.advertiserTotalMinor, 103500000n);
+        assert.equal(result.milestones.length, 1);
+      }
+
+      const milestone = db.milestone[0];
+
+      // The per-milestone advertiser fee MUST be zero — the funding fee
+      // already charged the advertiser on this exact amount.
+      assert.equal(milestone.advertiserServiceFeeMinor, 0n);
+      assert.equal(milestone.advertiserFeeConfigId, null);
+      assert.notEqual(db.financialObligation[0].feeConfigId, null);
     });
 
     it("NEVER marks anything funded: obligation stays PENDING_PAYMENT with no escrow and no ledger movement", async () => {
@@ -1048,6 +1081,304 @@ describe("Stage 14A — advertiser funding preparation", () => {
       });
 
       assert.equal(parsed.success, false);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ADVERTISER FEE MODEL — the two mutually exclusive advertiser fee mechanisms,
+// exercised at the PRODUCTION rates (5% / 5% / 7.5%) on a ₦100,000 agreement.
+//   SINGLE_PAYMENT : 5% AGREEMENT_FUNDING charged upfront at funding.
+//   MILESTONE      : NO funding fee; 5% MILESTONE_ADVERTISER_FEE collected per
+//                    milestone at settlement, never out of escrow.
+// The two 5% fees must NEVER both charge the advertiser on one amount.
+// ---------------------------------------------------------------------------
+describe("advertiser fee model — AGREEMENT_FUNDING vs MILESTONE_ADVERTISER_FEE", () => {
+  const HUNDRED_THOUSAND = 10000000n; // ₦100,000 in kobo
+  const MILESTONE = 2500000n; // ₦25,000 in kobo
+
+  before(async () => {
+    fundingService = await import("@/services/payments/funding.service");
+  });
+
+  beforeEach(() => {
+    resetDb();
+    addFeeConfigs();
+    // Every scenario below asserts against the LIVE production basis points.
+    useProductionRates();
+  });
+
+  /** Re-point the seeded rows at the live production basis points. */
+  function useProductionRates(): void {
+    const byType = (feeType: string) =>
+      db.platformFeeConfig.find((c) => c.feeType === feeType) as Row | undefined;
+
+    byType("AGREEMENT_FUNDING")!.feeBasisPoints = 500; // 5%
+    byType("MILESTONE_ADVERTISER_FEE")!.feeBasisPoints = 500; // 5%
+    byType("MILESTONE_CREATOR_FEE")!.feeBasisPoints = 750; // 7.5%
+  }
+
+  function fourMilestoneTerms() {
+    return [1, 2, 3, 4].map((position) => ({
+      position,
+      title: `Stage ${position}`,
+      creatorAmount: "25000.00",
+    }));
+  }
+
+  describe("SINGLE_PAYMENT agreement (one milestone)", () => {
+    it("advertiser pays ₦105,000, escrow holds ₦100,000, ₦5,000 funding revenue, no milestone fee", async () => {
+      const agreement = addAgreement({ agreedAmount: "100000.00" });
+
+      const result = await fundingService.prepareFundingForAgreement(agreement.id as string, ADV, {
+        milestones: [{ position: 1, title: "Whole", creatorAmount: "100000.00" }],
+      });
+
+      assert.equal(result.ok, true);
+
+      if (!result.ok) return;
+
+      // The exact Paystack amount is this — provider verification compares
+      // against it, so it is what the advertiser is actually charged.
+      assert.equal(result.creatorAmountMinor, HUNDRED_THOUSAND);
+      assert.equal(result.platformFeeMinor, 500000n); // 5% = ₦5,000
+      assert.equal(result.advertiserTotalMinor, 10500000n); // ₦105,000
+      assert.equal(result.currency, "NGN");
+      assert.equal(result.milestones.length, 1);
+
+      const milestone = db.milestone[0] as Row;
+
+      // NO per-milestone advertiser fee — that would be the double charge.
+      assert.equal(milestone.advertiserServiceFeeMinor, 0n);
+      assert.equal(milestone.advertiserFeeConfigId, null);
+      assert.equal(milestone.advertiserTotalMinor, HUNDRED_THOUSAND);
+      // The creator commission is unchanged by this fee model.
+      assert.equal(milestone.creatorCommissionMinor, 750000n); // 7.5% = ₦7,500
+    });
+
+    it("refuses a SINGLE-payment agreement with no ACTIVE funding fee configured", async () => {
+      const agreement = addAgreement({ agreedAmount: "100000.00" });
+      const funding = db.platformFeeConfig.find(
+        (c) => c.feeType === "AGREEMENT_FUNDING",
+      ) as Row;
+      funding.status = "INACTIVE";
+
+      const result = await fundingService.prepareFundingForAgreement(agreement.id as string, ADV, {
+        milestones: [{ position: 1, creatorAmount: "100000.00" }],
+      });
+
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.code, "FEE_NOT_CONFIGURED");
+      assert.equal(db.financialObligation.length, 0, "no obligation on refusal");
+      assert.equal(db.milestone.length, 0, "no milestones on refusal");
+    });
+  });
+
+  describe("MILESTONE agreement (four milestones)", () => {
+    it("initial funding is exactly ₦100,000 with a ₦0 funding fee", async () => {
+      useProductionRates();
+      const agreement = addAgreement({ agreedAmount: "100000.00" });
+
+      const result = await fundingService.prepareFundingForAgreement(agreement.id as string, ADV, {
+        milestones: fourMilestoneTerms(),
+      });
+
+      assert.equal(result.ok, true);
+
+      if (!result.ok) return;
+
+      // The Paystack amount for initial multi-milestone funding is EXACTLY the
+      // agreement amount — no 5% funding fee is included.
+      assert.equal(result.creatorAmountMinor, HUNDRED_THOUSAND);
+      assert.equal(result.platformFeeMinor, 0n);
+      assert.equal(result.advertiserTotalMinor, HUNDRED_THOUSAND);
+      assert.equal(result.milestones.length, 4);
+
+      // Escrow is funded with exactly the creator's money: that value IS the
+      // provider-verified advertiser total, so the escrow credit equals it.
+      assert.equal(db.financialObligation[0].advertiserTotalMinor, HUNDRED_THOUSAND);
+      assert.equal(db.financialObligation[0].feeConfigId, null);
+
+      // Preparation moves no money.
+      assert.equal(db.ledgerEntry.length, 0);
+    });
+
+    it("each ₦25,000 milestone freezes a ₦1,250 advertiser fee; four total ₦5,000", async () => {
+      useProductionRates();
+      const agreement = addAgreement({ agreedAmount: "100000.00" });
+
+      await fundingService.prepareFundingForAgreement(agreement.id as string, ADV, {
+        milestones: fourMilestoneTerms(),
+      });
+
+      assert.equal(db.milestone.length, 4);
+
+      for (const milestone of db.milestone) {
+        assert.equal(milestone.creatorAmountMinor, MILESTONE);
+        assert.equal(milestone.advertiserServiceFeeMinor, 125000n); // 5% of ₦25,000
+        assert.equal(milestone.creatorCommissionMinor, 187500n); // 7.5% of ₦25,000
+        assert.notEqual(milestone.advertiserFeeConfigId, null);
+      }
+
+      const totalAdvertiserFee = db.milestone.reduce<bigint>(
+        (sum, m) => sum + (m.advertiserServiceFeeMinor as bigint),
+        0n,
+      );
+
+      assert.equal(totalAdvertiserFee, 500000n); // ₦5,000
+
+      // Escrow is never over-funded: the fees are NOT part of the agreement
+      // amount, so they must not be added to it.
+      const milestoneSum = db.milestone.reduce<bigint>(
+        (sum, m) => sum + (m.creatorAmountMinor as bigint),
+        0n,
+      );
+
+      assert.equal(milestoneSum, HUNDRED_THOUSAND);
+      assert.notEqual(
+        HUNDRED_THOUSAND + totalAdvertiserFee,
+        db.financialObligation[0].advertiserTotalMinor,
+        "the milestone fee must never be folded into the funding amount",
+      );
+    });
+
+    it("does NOT require an AGREEMENT_FUNDING config at all for a milestone agreement", async () => {
+      useProductionRates();
+      const agreement = addAgreement({ agreedAmount: "100000.00" });
+      const funding = db.platformFeeConfig.find(
+        (c) => c.feeType === "AGREEMENT_FUNDING",
+      ) as Row;
+      funding.status = "INACTIVE";
+
+      const result = await fundingService.prepareFundingForAgreement(agreement.id as string, ADV, {
+        milestones: fourMilestoneTerms(),
+      });
+
+      assert.equal(result.ok, true);
+      if (result.ok) assert.equal(result.platformFeeMinor, 0n);
+    });
+
+    it("still refuses a milestone agreement with no ACTIVE milestone advertiser fee", async () => {
+      useProductionRates();
+      const agreement = addAgreement({ agreedAmount: "100000.00" });
+      const fee = db.platformFeeConfig.find(
+        (c) => c.feeType === "MILESTONE_ADVERTISER_FEE",
+      ) as Row;
+      fee.status = "INACTIVE";
+
+      const result = await fundingService.prepareFundingForAgreement(agreement.id as string, ADV, {
+        milestones: fourMilestoneTerms(),
+      });
+
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.code, "FEE_NOT_CONFIGURED");
+      assert.equal(db.milestone.length, 0);
+    });
+  });
+
+  describe("mutual exclusivity and idempotency", () => {
+    it("a given agreement never collects both 5% fees", async () => {
+      useProductionRates();
+
+      // Single-payment: funding fee charged, milestone fee zero.
+      const single = addAgreement({ agreedAmount: "100000.00" });
+      const singleResult = await fundingService.prepareFundingForAgreement(
+        single.id as string,
+        ADV,
+        { milestones: [{ position: 1, creatorAmount: "100000.00" }] },
+      );
+      assert.equal(singleResult.ok, true);
+      if (singleResult.ok) {
+        assert.equal(singleResult.platformFeeMinor, 500000n);
+        assert.equal((db.milestone[0] as Row).advertiserServiceFeeMinor, 0n);
+      }
+
+      const singleTotalAdvertiserFee =
+        (db.financialObligation[0].platformFeeMinor as bigint) +
+        (db.milestone[0].advertiserServiceFeeMinor as bigint);
+
+      assert.equal(singleTotalAdvertiserFee, 500000n, "exactly one 5% charged");
+
+      db.campaignAgreement.length = 0;
+      db.financialObligation.length = 0;
+      db.milestone.length = 0;
+
+      // Multi-milestone: funding fee zero, milestone fee collected instead.
+      const multi = addAgreement({ agreedAmount: "100000.00" });
+      const multiResult = await fundingService.prepareFundingForAgreement(
+        multi.id as string,
+        ADV,
+        { milestones: fourMilestoneTerms() },
+      );
+      assert.equal(multiResult.ok, true);
+      if (multiResult.ok) assert.equal(multiResult.platformFeeMinor, 0n);
+
+      const multiTotalAdvertiserFee = db.milestone.reduce<bigint>(
+        (sum, m) => sum + (m.advertiserServiceFeeMinor as bigint),
+        0n,
+      );
+
+      assert.equal(
+        (db.financialObligation[0].platformFeeMinor as bigint) + multiTotalAdvertiserFee,
+        500000n,
+        "exactly one 5% charged",
+      );
+    });
+
+    it("re-preparing the same agreement is refused (no doubled fees)", async () => {
+      useProductionRates();
+      const agreement = addAgreement({ agreedAmount: "100000.00" });
+
+      const first = await fundingService.prepareFundingForAgreement(
+        agreement.id as string,
+        ADV,
+        { milestones: fourMilestoneTerms() },
+      );
+      assert.equal(first.ok, true);
+
+      const second = await fundingService.prepareFundingForAgreement(
+        agreement.id as string,
+        ADV,
+        { milestones: fourMilestoneTerms() },
+      );
+
+      assert.equal(second.ok, false);
+      if (!second.ok) assert.equal(second.code, "ALREADY_PREPARED");
+      assert.equal(db.financialObligation.length, 1);
+      assert.equal(db.milestone.length, 4);
+    });
+
+    it("uses BigInt minor units end to end — no floats in any amount", async () => {
+      useProductionRates();
+      const agreement = addAgreement({ agreedAmount: "100000.00" });
+
+      const result = await fundingService.prepareFundingForAgreement(
+        agreement.id as string,
+        ADV,
+        { milestones: fourMilestoneTerms() },
+      );
+
+      assert.equal(result.ok, true);
+      if (!result.ok) return;
+
+      for (const value of [
+        result.creatorAmountMinor,
+        result.platformFeeMinor,
+        result.advertiserTotalMinor,
+      ]) {
+        assert.equal(typeof value, "bigint");
+      }
+
+      for (const milestone of db.milestone) {
+        for (const key of [
+          "creatorAmountMinor",
+          "advertiserServiceFeeMinor",
+          "creatorCommissionMinor",
+          "advertiserTotalMinor",
+        ]) {
+          assert.equal(typeof milestone[key], "bigint", `${key} must be bigint`);
+        }
+      }
     });
   });
 });

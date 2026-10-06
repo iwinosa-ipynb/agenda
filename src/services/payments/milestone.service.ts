@@ -5,7 +5,15 @@ import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { feeFor, toMinorUnits } from "@/lib/money";
 import type { MilestoneState } from "@/services/payments/milestone-state-machine";
-import { getMilestoneFeeConfigurations } from "@/services/payments/fee-config.service";
+import {
+  getActiveAdvertiserMilestoneFeeConfiguration,
+  getActiveCreatorMilestoneFeeConfiguration,
+} from "@/services/payments/fee-config.service";
+import {
+  ZERO_FEE_RATE,
+  chargesFeePerMilestone,
+  type AgreementFeeMode,
+} from "@/services/payments/fee-engine";
 import {
   transitionObligation,
   transitionEventKey,
@@ -112,7 +120,7 @@ function buildMilestoneRef(agreementId: string, position: number): string {
  */
 export async function planMilestonesForAgreement(
   agreementId: string,
-  options: { milestones?: MilestonePlanInput[] } = {},
+  options: { milestones?: MilestonePlanInput[]; feeMode?: AgreementFeeMode } = {},
   /**
    * Pass a transaction client to run inside a caller-managed transaction
    * (Stage 14A funding preparation); defaults to the module client.
@@ -164,17 +172,12 @@ export async function planMilestonesForAgreement(
   }
 
   // Server-side fee configuration — typed rows, never hard-coded percentages.
-  const feeConfigs = await getMilestoneFeeConfigurations(agreement.currency);
-
-  if (!feeConfigs.ok) {
-    return {
-      ok: false,
-      code: "FEE_NOT_CONFIGURED",
-      reason:
-        "No ACTIVE milestone fee configuration exists for this currency (advertiser service fee and/or creator commission).",
-    };
-  }
-
+  //
+  // The creator commission is resolved for EVERY agreement (its behaviour is
+  // unchanged by this fee model). The per-milestone ADVERTISER fee is resolved
+  // only for MILESTONE agreements: a single-payment agreement already paid the
+  // AGREEMENT_FUNDING fee upfront, so charging a per-milestone advertiser fee
+  // as well would bill the advertiser twice on the same amount.
   let agreementTotalMinor: bigint;
 
   try {
@@ -217,6 +220,55 @@ export async function planMilestonesForAgreement(
       code: "INVALID_MILESTONE_COUNT",
       reason: "An agreement supports between 1 and 52 milestones.",
     };
+  }
+
+  // The two advertiser fee mechanisms are mutually exclusive and which one
+  // applies follows from the milestone count itself:
+  //
+  //   ONE term  -> SINGLE_PAYMENT: the 5% AGREEMENT_FUNDING fee was charged
+  //                upfront at funding, so the per-milestone advertiser fee
+  //                MUST be zero or the advertiser pays twice on one amount.
+  //   2+ terms  -> MILESTONE: no funding fee; the 5% MILESTONE_ADVERTISER_FEE
+  //                is collected per milestone at settlement, from the
+  //                advertiser and never out of escrow.
+  //
+  // An explicit feeMode (from the funding flow, which derives it the same way)
+  // takes precedence so both services always agree.
+  const resolvedFeeMode: AgreementFeeMode =
+    options.feeMode ?? (terms.length === 1 ? "SINGLE_PAYMENT" : "MILESTONE");
+
+  // Server-side fee configuration — typed rows, never hard-coded percentages.
+  //
+  // The creator commission is resolved for EVERY agreement (its behaviour is
+  // unchanged by this fee model). The per-milestone ADVERTISER fee is resolved
+  // only for MILESTONE agreements.
+  const creatorFeeConfig = await getActiveCreatorMilestoneFeeConfiguration(agreement.currency);
+
+  if (!creatorFeeConfig.ok) {
+    return {
+      ok: false,
+      code: "FEE_NOT_CONFIGURED",
+      reason: "No ACTIVE milestone fee configuration exists for this currency (creator commission).",
+    };
+  }
+
+  let advertiserRate = ZERO_FEE_RATE;
+  let advertiserFeeConfigId: string | null = null;
+
+  if (chargesFeePerMilestone(resolvedFeeMode)) {
+    const advertiserFeeConfig = await getActiveAdvertiserMilestoneFeeConfiguration(agreement.currency);
+
+    if (!advertiserFeeConfig.ok) {
+      return {
+        ok: false,
+        code: "FEE_NOT_CONFIGURED",
+        reason:
+          "No ACTIVE milestone fee configuration exists for this currency (advertiser service fee and/or creator commission).",
+      };
+    }
+
+    advertiserRate = advertiserFeeConfig.rate;
+    advertiserFeeConfigId = advertiserFeeConfig.feeConfig.id;
   }
 
   // Validate + convert every explicit term BEFORE writing anything.
@@ -296,9 +348,11 @@ export async function planMilestonesForAgreement(
       };
     }
 
-    // Fees derive from THIS milestone's own amount, floor-rounded.
-    const advertiserFeeMinor = feeFor(creatorAmountMinor, feeConfigs.advertiserRate.feeBasisPoints);
-    const creatorCommissionMinor = feeFor(creatorAmountMinor, feeConfigs.creatorRate.feeBasisPoints);
+    // Fees derive from THIS milestone's own amount, floor-rounded. On a
+    // single-payment agreement the advertiser fee is ZERO because the 5%
+    // AGREEMENT_FUNDING fee already covered it at funding.
+    const advertiserFeeMinor = feeFor(creatorAmountMinor, advertiserRate.feeBasisPoints);
+    const creatorCommissionMinor = feeFor(creatorAmountMinor, creatorFeeConfig.rate.feeBasisPoints);
     const advertiserTotalMinor = creatorAmountMinor + advertiserFeeMinor;
 
     sumMinor += creatorAmountMinor;
@@ -345,8 +399,8 @@ export async function planMilestonesForAgreement(
     creatorCommissionMinor: plan.creatorCommissionMinor,
     advertiserTotalMinor: plan.advertiserTotalMinor,
     currency: agreement.currency,
-    advertiserFeeConfigId: feeConfigs.advertiserFee.id,
-    creatorFeeConfigId: feeConfigs.creatorFee.id,
+    advertiserFeeConfigId,
+    creatorFeeConfigId: creatorFeeConfig.feeConfig.id,
     status: "PENDING",
   }));
 
@@ -751,6 +805,8 @@ export async function settleConfirmedMilestone(
       // creator's compensation is settled on paper here; actual provider
       // payout execution stays behind the Stage 13A port.
       const ledgerLines = [
+        // The creator's GROSS claim on this milestone is established at the frozen
+        // milestone amount.
         {
           account: `creator:${milestone.creatorId}:receivable`,
           direction: "CREDIT" as const,
@@ -758,10 +814,15 @@ export async function settleConfirmedMilestone(
           currency: milestone.currency,
           entryType: "CREATOR_PAYOUT" as const,
         },
+        // The 7.5% marketplace commission is DEDUCTED from the creator's gross
+        // amount: it is withheld against the creator's own settlement
+        // liability, which is exactly what leaves the creator NET = gross - 7.5%
+        // on the payout. This is the balancing side of the platform commission
+        // credit below.
         {
-          account: "platform:revenue",
-          direction: "CREDIT" as const,
-          amountMinor: milestone.advertiserServiceFeeMinor,
+          account: `creator:${milestone.creatorId}:receivable`,
+          direction: "DEBIT" as const,
+          amountMinor: milestone.creatorCommissionMinor,
           currency: milestone.currency,
           entryType: "PLATFORM_FEE" as const,
         },
@@ -772,16 +833,41 @@ export async function settleConfirmedMilestone(
           currency: milestone.currency,
           entryType: "PLATFORM_FEE" as const,
         },
+        // Escrow carries ONLY the creator's agreed money, so it is debited
+        // EXACTLY ONCE by the gross milestone amount. It is never debited for
+        // the creator commission, nor for any advertiser fee.
         {
           account: "platform:escrow",
           direction: "DEBIT" as const,
-          amountMinor:
-            milestone.creatorAmountMinor +
-            milestone.advertiserServiceFeeMinor +
-            milestone.creatorCommissionMinor,
+          amountMinor: milestone.creatorAmountMinor,
           currency: milestone.currency,
           entryType: "ESCROW_HOLD" as const,
         },
+        // The advertiser's 5% MILESTONE_ADVERTISER_FEE is collected FROM THE
+        // ADVERTISER at this milestone — never out of escrow. Escrow only ever
+        // received the creator's agreed money, so it is debited by the creator
+        // milestone amount alone and nets to exactly zero once the last
+        // milestone settles. On a single-payment agreement this fee is zero
+        // (AGREEMENT_FUNDING already charged it at funding), so both lines are
+        // omitted rather than written as zero-value rows.
+        ...(milestone.advertiserServiceFeeMinor > 0n
+          ? [
+              {
+                account: `advertiser:${milestone.advertiserId}:payable`,
+                direction: "DEBIT" as const,
+                amountMinor: milestone.advertiserServiceFeeMinor,
+                currency: milestone.currency,
+                entryType: "CHARGE" as const,
+              },
+              {
+                account: "platform:revenue",
+                direction: "CREDIT" as const,
+                amountMinor: milestone.advertiserServiceFeeMinor,
+                currency: milestone.currency,
+                entryType: "PLATFORM_FEE" as const,
+              },
+            ]
+          : []),
       ];
 
       const baseKey = `msettle:${milestoneId}`;

@@ -5,7 +5,12 @@ import type { Prisma } from "@/generated/prisma/client";
 import { isUniqueConstraintError } from "@/lib/prisma-errors";
 import { prisma } from "@/lib/prisma";
 import { toMinorUnits } from "@/lib/money";
-import { computeObligationAmounts } from "@/services/payments/fee-engine";
+import {
+  ZERO_FEE_RATE,
+  chargesFeePerMilestone,
+  computeObligationAmounts,
+  type AgreementFeeMode,
+} from "@/services/payments/fee-engine";
 import { getActiveFeeConfiguration } from "@/services/payments/fee-config.service";
 
 /**
@@ -24,6 +29,18 @@ import { getActiveFeeConfiguration } from "@/services/payments/fee-config.servic
  *   - platformFeeMinor   = server-side fee configuration (FEE_NOT_CONFIGURED
  *     refuses creation rather than inventing a fee);
  *   - advertiserTotalMinor = creatorAmountMinor + platformFeeMinor.
+ *
+ * ADVERTISER FEE MODE (the two mechanisms are mutually exclusive):
+ *
+ *   SINGLE_PAYMENT — the default. platformFeeMinor is the ACTIVE
+ *     AGREEMENT_FUNDING rate, so the advertiser is charged the funding fee
+ *     upfront inside advertiserTotalMinor. Escrow is credited the creator
+ *     amount only, and the per-milestone advertiser fee stays ZERO.
+ *
+ *   MILESTONE — a multi-milestone agreement. The advertiser funds ONLY the
+ *     creator's agreed money: platformFeeMinor is ZERO and no funding fee is
+ *     charged upfront. The 5% MILESTONE_ADVERTISER_FEE is instead collected
+ *     per milestone at settlement, from the advertiser, never from escrow.
  *
  * Idempotent: one obligation per agreement, enforced by the database
  * (unique agreementId). Concurrent creations lose the unique race and are
@@ -54,10 +71,15 @@ export async function createObligationForAgreement(
   /**
    * Pass a transaction client to run inside a caller-managed transaction
    * (Stage 14A funding preparation); defaults to the module client.
+   *
+   * `feeMode` selects which of the two mutually exclusive advertiser fee
+   * mechanisms this agreement uses. Defaults to SINGLE_PAYMENT so every
+   * pre-existing caller keeps charging the AGREEMENT_FUNDING fee.
    */
-  options: { tx?: Prisma.TransactionClient } = {},
+  options: { tx?: Prisma.TransactionClient; feeMode?: AgreementFeeMode } = {},
 ): Promise<ObligationCreationResult> {
   const db = options.tx ?? prisma;
+  const feeMode: AgreementFeeMode = options.feeMode ?? "SINGLE_PAYMENT";
 
   const agreement = await db.campaignAgreement.findUnique({
     where: { id: agreementId },
@@ -95,14 +117,29 @@ export async function createObligationForAgreement(
   }
 
   // Server-side fee configuration — never a client value, never a default 0.
-  const feeResult = await getActiveFeeConfiguration(agreement.currency);
+  //
+  // A MILESTONE agreement is deliberately NOT charged a funding fee: the
+  // advertiser funds the creator's agreed money only, and pays the 5%
+  // MILESTONE_ADVERTISER_FEE per milestone at settlement instead. No fee
+  // config is consulted, and none is snapshotted onto the obligation.
+  const perMilestone = chargesFeePerMilestone(feeMode);
 
-  if (!feeResult.ok) {
-    // FEE_NOT_CONFIGURED is surfaced explicitly — never a silent 0% fee.
-    return { ok: false, code: feeResult.code, reason: "No ACTIVE platform fee configuration exists for this currency." };
+  let feeRate = ZERO_FEE_RATE;
+  let feeConfigId: string | null = null;
+
+  if (!perMilestone) {
+    const feeResult = await getActiveFeeConfiguration(agreement.currency);
+
+    if (!feeResult.ok) {
+      // FEE_NOT_CONFIGURED is surfaced explicitly — never a silent 0% fee.
+      return { ok: false, code: feeResult.code, reason: "No ACTIVE platform fee configuration exists for this currency." };
+    }
+
+    feeRate = feeResult.rate;
+    feeConfigId = feeResult.feeConfig.id;
   }
 
-  const amounts = computeObligationAmounts(creatorAmountMinor, feeResult.rate);
+  const amounts = computeObligationAmounts(creatorAmountMinor, feeRate);
 
   if (!amounts.ok) {
     return {
@@ -130,7 +167,7 @@ export async function createObligationForAgreement(
         currency: agreement.currency,
         status: "PENDING_PAYMENT",
         obligationRef,
-        feeConfigId: feeResult.feeConfig.id,
+        feeConfigId,
       },
       select: { id: true },
     });
@@ -152,7 +189,7 @@ export async function createObligationForAgreement(
             platformFeeMinor: amounts.platformFeeMinor.toString(),
             advertiserTotalMinor: amounts.advertiserTotalMinor.toString(),
             currency: agreement.currency,
-            feeConfigId: feeResult.feeConfig.id,
+            feeConfigId,
           },
           idempotencyKey: `evt:${created.id}:obligation_created`,
         },

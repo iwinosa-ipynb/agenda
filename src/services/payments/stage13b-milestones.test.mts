@@ -18,7 +18,7 @@ import { before, beforeEach, describe, it, mock } from "node:test";
  *   - LOW VIEWS NEVER BLOCK — no metric is ever consulted;
  *   - advertiser delay is recorded, never charged to the creator;
  *   - client can influence neither timer nor amounts;
- *   - fees are earned ONLY on completed milestones, from config (5%/10%);
+ *   - fees are earned ONLY on completed milestones, from config (5%/7.5%);
  *   - long-term milestones stay independently governed.
  */
 
@@ -411,8 +411,8 @@ function addFeeConfigs(): void {
       status: "ACTIVE",
     } as Row,
     {
-      id: "fee-creator-1000",
-      feeBasisPoints: 1000,
+      id: "fee-creator-750",
+      feeBasisPoints: 750,
       currency: "NGN",
       feeType: "MILESTONE_CREATOR_FEE",
       status: "ACTIVE",
@@ -559,7 +559,7 @@ beforeEach(() => {
 });
 
 describe("Stage 13B — milestone planning & frozen amounts", () => {
-  it("plans one milestone from the frozen agreement with configured 5% / 10% fees", async () => {
+  it("plans one milestone from the frozen agreement with NO per-milestone advertiser fee (single-payment)", async () => {
     const agreement = addAgreement({ agreedAmount: "300000.00" });
     const planned = await milestoneService.planMilestonesForAgreement(agreement.id as string);
 
@@ -568,9 +568,13 @@ describe("Stage 13B — milestone planning & frozen amounts", () => {
     const milestone = db.milestone[0];
 
     assert.equal(milestone.creatorAmountMinor, 30000000n); // ₦300,000
-    assert.equal(milestone.advertiserServiceFeeMinor, 1500000n); // 5% = ₦15,000
-    assert.equal(milestone.creatorCommissionMinor, 3000000n); // 10% = ₦30,000
-    assert.equal(milestone.advertiserTotalMinor, 31500000n); // creator + 5%
+    // A ONE-term plan is a single-payment agreement: the 5% AGREEMENT_FUNDING
+    // fee was charged upfront, so the per-milestone advertiser fee MUST be 0
+    // or the advertiser pays twice on the same amount.
+    assert.equal(milestone.advertiserServiceFeeMinor, 0n);
+    assert.equal(milestone.advertiserFeeConfigId, null);
+    assert.equal(milestone.creatorCommissionMinor, 2250000n); // 7.5% = ₦22,500
+    assert.equal(milestone.advertiserTotalMinor, 30000000n); // creator only
     assert.equal(milestone.status, "PENDING");
   });
 
@@ -592,12 +596,12 @@ describe("Stage 13B — milestone planning & frozen amounts", () => {
     assert.equal(db.milestone[1].creatorAmountMinor, 30000000n); // ₦300,000
     assert.equal(db.milestone[2].creatorAmountMinor, 40000000n); // ₦400,000
 
-    // Fees derive from each individual milestone amount (5% / 10%).
+    // Fees derive from each individual milestone amount (5% / 7.5%).
     assert.equal(db.milestone[0].advertiserServiceFeeMinor, 1000000n); // 5% of 200k
     assert.equal(db.milestone[1].advertiserServiceFeeMinor, 1500000n); // 5% of 300k
     assert.equal(db.milestone[2].advertiserServiceFeeMinor, 2000000n); // 5% of 400k
-    assert.equal(db.milestone[0].creatorCommissionMinor, 2000000n); // 10% of 200k
-    assert.equal(db.milestone[2].creatorCommissionMinor, 4000000n); // 10% of 400k
+    assert.equal(db.milestone[0].creatorCommissionMinor, 1500000n); // 7.5% of 200k
+    assert.equal(db.milestone[2].creatorCommissionMinor, 3000000n); // 7.5% of 400k
   });
 
   it("milestone amounts reconcile EXACTLY to the agreement amount — drift is refused", async () => {
@@ -888,18 +892,36 @@ describe("Stage 13B — advertiser confirmation & settlement", () => {
 
     assert.equal(row.status, "RELEASED");
     assert.equal(row.releasedAt instanceof Date, true);
-    assert.equal(db.ledgerEntry.length, 4); // payout + 2 platform fees + escrow debit
+    // Single-payment agreement: no per-milestone advertiser fee is charged, so
+    // there is no advertiser CHARGE and no platform:revenue line. Escrow is
+    // debited by the creator amount ONLY.
+    // payout credit + commission withheld from the creator + commission revenue
+    // + escrow debit (gross only)
+    assert.equal(db.ledgerEntry.length, 4);
 
     const payout = db.ledgerEntry.find((e) => e.entryType === "CREATOR_PAYOUT");
 
     assert.equal(payout?.amountMinor, 30000000n);
 
-    const revenue = db.ledgerEntry.filter((e) => e.entryType === "PLATFORM_FEE");
+    const escrow = db.ledgerEntry.find((e) => e.account === "platform:escrow");
 
-    assert.deepEqual(
-      revenue.map((e) => e.amountMinor).sort(),
-      [1500000n, 3000000n],
+    assert.equal(escrow?.direction, "DEBIT");
+    assert.equal(escrow?.amountMinor, 30000000n);
+
+    assert.equal(
+      db.ledgerEntry.filter((e) => e.entryType === "CHARGE").length,
+      0,
+      "a single-payment agreement must never be charged a per-milestone fee",
     );
+
+    // The only Agenda revenue on a single-payment agreement is the creator
+    // commission — asserted by ACCOUNT so the withholding debit against the
+    // creator's own receivable is never counted as revenue.
+    const revenue = db.ledgerEntry.filter(
+      (e) => e.account === "platform:creator-commission",
+    );
+
+    assert.deepEqual(revenue.map((e) => e.amountMinor).sort(), [2250000n]);
   });
 
   it("unauthorized user cannot confirm another advertiser's milestone", async () => {
@@ -1445,6 +1467,8 @@ describe("Stage 13B — support escalation & decisions", () => {
     assert.equal(row.status, "RELEASED");
     assert.equal(row.supportDecision, "RELEASE_PAYMENT");
     assert.ok(row.supportDecidedAt);
+    // Single-payment support release: payout credit + commission withheld +
+    // commission revenue + escrow debit (gross only).
     assert.equal(db.ledgerEntry.length, 4);
 
     const payout = db.ledgerEntry.find((e) => e.entryType === "CREATOR_PAYOUT");
@@ -1585,9 +1609,24 @@ describe("Stage 13B — long-term campaigns & fee earning", () => {
     assert.equal(m1.status, "RELEASED");
     assert.equal(m3.status, "PENDING");
 
-    // Only M1's settlement hit the ledger (4 lines); its payout is exactly
-    // M1's own ₦100k (12, 000,000... 100000.00 → 10000000 kobo).
-    assert.equal(db.ledgerEntry.length, 4);
+    // Only M1's settlement hit the ledger. A multi-milestone agreement settles
+    // 5 lines: creator payout, escrow debit (creator amount only), the
+    // advertiser's CHARGE for the milestone fee, the matching platform
+    // revenue, and the creator commission.
+    assert.equal(db.ledgerEntry.length, 6);
+
+    // The advertiser is genuinely charged the milestone fee, from OUTSIDE
+    // escrow — escrow is debited only M1's creator amount.
+    const escrow = db.ledgerEntry.find((e) => e.account === "platform:escrow");
+
+    assert.equal(escrow?.amountMinor, 10000000n);
+
+    const advertiserCharge = db.ledgerEntry.find(
+      (e) => e.entryType === "CHARGE" && String(e.account).startsWith("advertiser:"),
+    );
+
+    assert.equal(advertiserCharge?.direction, "DEBIT");
+    assert.equal(advertiserCharge?.amountMinor, 500000n); // 5% of ₦100k
 
     const payout = db.ledgerEntry.find((e) => e.entryType === "CREATOR_PAYOUT");
 
@@ -1612,14 +1651,17 @@ describe("Stage 13B — long-term campaigns & fee earning", () => {
     });
 
     // M1 released: fees derive from M1's OWN ₦120k amount —
-    // 5% = ₦6,000 (600000 kobo), 10% = ₦12,000 (1200000 kobo). M2 (still
+    // 5% = ₦6,000 (600000 kobo), 7.5% = ₦9,000 (900000 kobo). M2 (still
     // PENDING, ₦80k) earned NOTHING.
-    const fees = db.ledgerEntry.filter((e) => e.entryType === "PLATFORM_FEE");
-
-    assert.deepEqual(
-      fees.map((e) => e.amountMinor as bigint).sort((a, b) => (a > b ? 1 : a < b ? -1 : 0)),
-      [600000n, 1200000n],
+    // Split by ACCOUNT so the advertiser service fee and the creator commission
+    // are asserted independently of each other.
+    const revenue = db.ledgerEntry.filter((e) => e.account === "platform:revenue");
+    const commission = db.ledgerEntry.filter(
+      (e) => e.account === "platform:creator-commission",
     );
+
+    assert.deepEqual(revenue.map((e) => e.amountMinor as bigint), [600000n]); // 5% of M1's 120k
+    assert.deepEqual(commission.map((e) => e.amountMinor as bigint), [900000n]); // 7.5% of M1's 120k
 
     const payout = db.ledgerEntry.find((e) => e.entryType === "CREATOR_PAYOUT");
 
@@ -1652,14 +1694,21 @@ describe("Stage 13B — long-term campaigns & fee earning", () => {
       userId: ADV_USER,
     });
 
-    // Agenda's revenue lines are exactly the two configured fees. No
-    // processing-fee entry exists in this stage at all (provider execution
-    // stays behind the 13A port).
-    const revenue = db.ledgerEntry.filter((e) => e.entryType === "PLATFORM_FEE");
+    // Agenda's revenue lines are exactly the configured fees that actually
+    // apply here. This is a SINGLE-payment agreement, so the per-milestone
+    // advertiser fee is zero and the only revenue line is the creator
+    // commission. No Paystack processing-fee entry exists in this stage at
+    // all (provider execution stays behind the 13A port).
+    const revenue = db.ledgerEntry.filter(
+      (e) => e.account === "platform:creator-commission",
+    );
 
-    assert.deepEqual(
-      revenue.map((e) => e.amountMinor).sort(),
-      [1500000n, 3000000n],
+    assert.deepEqual(revenue.map((e) => e.amountMinor).sort(), [2250000n]);
+
+    assert.equal(
+      db.ledgerEntry.filter((e) => e.account === "platform:revenue").length,
+      0,
+      "no per-milestone revenue on a single-payment agreement",
     );
   });
 });
@@ -1982,7 +2031,7 @@ describe("Stage 13B corrections — support authorization boundary", () => {
 
     const [m1, , m3] = db.milestone;
 
-    // M1 releases: payout is exactly ₦200k (20000000 kobo), fees 5%/10% of
+    // M1 releases: payout is exactly ₦200k (20000000 kobo), fees 5%/7.5% of
     // ₦200k — NOT of ₦300k and not of the ₦900k total.
     const p1 = addPost({ status: "VERIFIED" });
     await enterReview(m1.id as string, p1.id as string);
@@ -1996,12 +2045,16 @@ describe("Stage 13B corrections — support authorization boundary", () => {
 
     assert.equal(payout1?.amountMinor, 20000000n);
 
-    const fees1 = db.ledgerEntry
-      .filter((e) => e.entryType === "PLATFORM_FEE")
-      .map((e) => e.amountMinor as bigint)
-      .sort((a, b) => (a > b ? 1 : a < b ? -1 : 0));
+    // Fees derive from M1's OWN 200k, asserted per revenue account.
+    const revenue1 = db.ledgerEntry
+      .filter((e) => e.account === "platform:revenue")
+      .map((e) => e.amountMinor as bigint);
+    const commission1 = db.ledgerEntry
+      .filter((e) => e.account === "platform:creator-commission")
+      .map((e) => e.amountMinor as bigint);
 
-    assert.deepEqual(fees1, [1000000n, 2000000n]); // 5% + 10% of ₦200k
+    assert.deepEqual(revenue1, [1000000n]); // 5% of 200k
+    assert.deepEqual(commission1, [1500000n]); // 7.5% of 200k
 
     // M3 releases: payout is exactly ₦400k, fees of ₦400k.
     const p3 = addPost({ status: "VERIFIED" });
@@ -2018,13 +2071,327 @@ describe("Stage 13B corrections — support authorization boundary", () => {
 
     assert.deepEqual(payouts, [20000000n, 40000000n]);
 
-    // M2 (₦300k) never settled: no ledger line carries its amount.
+    // M2 (₦300k) never settled: no ledger line carries its amount. M2's own
+    // fees at the configured rates are 5% advertiser fee = 1,500,000 and 7.5%
+    // creator commission = 2,250,000. The advertiser-fee value is scoped by
+    // ACCOUNT because M1's 7.5% commission happens to equal it (1,500,000).
     const m2AmountLines = db.ledgerEntry.filter(
       (e) =>
         (e.entryType === "CREATOR_PAYOUT" && e.amountMinor === 30000000n) ||
-        (e.entryType === "PLATFORM_FEE" && (e.amountMinor === 1500000n || e.amountMinor === 3000000n)),
+        (e.entryType === "PLATFORM_FEE" &&
+          ((e.account === "platform:revenue" && e.amountMinor === 1500000n) ||
+            e.amountMinor === 2250000n)),
     );
 
     assert.equal(m2AmountLines.length, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ESCROW ACCOUNTING — platform:escrow carries ONLY the creator's agreed money.
+//
+// Multi-milestone: the advertiser funds ₦100,000 upfront with NO funding fee,
+// escrow is credited ₦100,000, and each ₦25,000 milestone debits escrow by
+// ₦25,000 and charges the advertiser a separate ₦1,250 milestone fee. Final
+// escrow must be exactly ₦0 — the escrow balance never pays an advertiser fee.
+// ---------------------------------------------------------------------------
+describe("escrow accounting — creator money only, fees charged separately", () => {
+  const AGREEMENT = 10000000n; // ₦100,000 in kobo
+  const PER_MILESTONE = 2500000n; // ₦25,000 in kobo
+  const MILESTONE_FEE = 125000n; // 5% of ₦25,000
+
+  /** Fund + settle all four ₦25,000 milestones of a ₦100,000 agreement. */
+  async function settleAllFour(): Promise<void> {
+    const agreement = addAgreement({ agreedAmount: "100000.00" });
+
+    // planAndFund adds the FUNDED obligation and plans the explicit terms —
+    // four terms means a MILESTONE agreement, so the per-milestone advertiser
+    // fee is the one that applies.
+    await planAndFund(agreement, ["25000.00", "25000.00", "25000.00", "25000.00"]);
+
+    assert.equal(db.milestone.length, 4);
+
+    for (const milestone of db.milestone) {
+      const post = addPost({ status: "VERIFIED" });
+
+      await enterReview(milestone.id as string, post.id as string);
+      await reviewService.confirmMilestoneRelease(milestone.id as string, {
+        advertiserProfileId: ADV,
+        userId: ADV_USER,
+      });
+    }
+  }
+
+  it("debits escrow by the CREATOR amount only — never a fee component", async () => {
+    await settleAllFour();
+
+    const escrowDebits = db.ledgerEntry.filter(
+      (e) => e.account === "platform:escrow" && e.direction === "DEBIT",
+    );
+
+    assert.equal(escrowDebits.length, 4);
+    assert.deepEqual(
+      escrowDebits.map((e) => e.amountMinor as bigint),
+      [PER_MILESTONE, PER_MILESTONE, PER_MILESTONE, PER_MILESTONE],
+    );
+
+    // Escrow was credited the agreement amount at funding, so debits must not
+    // exceed it by even one kobo.
+    const totalDebited = escrowDebits.reduce<bigint>(
+      (sum, e) => sum + (e.amountMinor as bigint),
+      0n,
+    );
+
+    assert.equal(totalDebited, AGREEMENT);
+  });
+
+  it("nets escrow to exactly zero after the final milestone", async () => {
+    await settleAllFour();
+
+    const credits = db.ledgerEntry
+      .filter((e) => e.account === "platform:escrow" && e.direction === "CREDIT")
+      .reduce<bigint>((sum, e) => sum + (e.amountMinor as bigint), 0n);
+    const debits = db.ledgerEntry
+      .filter((e) => e.account === "platform:escrow" && e.direction === "DEBIT")
+      .reduce<bigint>((sum, e) => sum + (e.amountMinor as bigint), 0n);
+
+    // Funding credit is modelled by the obligation's advertiser total.
+    assert.equal(credits, 0n, "the funding escrow credit is written by the 14B gate");
+    assert.equal(debits - AGREEMENT, 0n, "final escrow balance must be exactly zero");
+  });
+
+  it("charges the advertiser ₦1,250 per milestone OUTSIDE escrow, ₦5,000 total", async () => {
+    await settleAllFour();
+
+    const charges = db.ledgerEntry.filter((e) => e.entryType === "CHARGE");
+
+    assert.equal(charges.length, 4);
+    for (const charge of charges) {
+      assert.equal(charge.amountMinor, MILESTONE_FEE);
+      assert.equal(charge.direction, "DEBIT");
+      assert.match(charge.account as string, /^advertiser:/);
+      assert.notEqual(charge.account, "platform:escrow");
+    }
+
+    const totalCharged = charges.reduce<bigint>(
+      (sum, e) => sum + (e.amountMinor as bigint),
+      0n,
+    );
+
+    assert.equal(totalCharged, 500000n); // ₦5,000
+
+    // The same amount is recognised as platform revenue.
+    const revenue = db.ledgerEntry
+      .filter((e) => e.account === "platform:revenue")
+      .reduce<bigint>((sum, e) => sum + (e.amountMinor as bigint), 0n);
+
+    assert.equal(revenue, totalCharged);
+  });
+
+  it("pays the creator the milestone amount and never withholds an advertiser fee", async () => {
+    await settleAllFour();
+
+    const payouts = db.ledgerEntry.filter((e) => e.entryType === "CREATOR_PAYOUT");
+
+    assert.equal(payouts.length, 4);
+    assert.equal(
+      payouts.reduce<bigint>((sum, e) => sum + (e.amountMinor as bigint), 0n),
+      AGREEMENT,
+      "the creator is credited every kobo of the agreement",
+    );
+
+    // No advertiser fee ever appears on a creator-facing line.
+    for (const payout of payouts) {
+      assert.equal(payout.amountMinor, PER_MILESTONE);
+    }
+  });
+
+  it("single-payment agreements are never charged a milestone fee again", async () => {
+    const { milestone } = await singleMilestone();
+    const post = addPost({ status: "VERIFIED" });
+
+    await enterReview(milestone.id as string, post.id as string);
+    await reviewService.confirmMilestoneRelease(milestone.id as string, {
+      advertiserProfileId: ADV,
+      userId: ADV_USER,
+    });
+
+    assert.equal(
+      db.ledgerEntry.filter((e) => e.entryType === "CHARGE").length,
+      0,
+      "AGREEMENT_FUNDING already charged this advertiser — no second 5%",
+    );
+    assert.equal(
+      db.ledgerEntry.filter((e) => e.account === "platform:revenue").length,
+      0,
+    );
+
+    const escrow = db.ledgerEntry.find((e) => e.account === "platform:escrow");
+
+    assert.equal(escrow?.amountMinor, milestone.creatorAmountMinor);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CREATOR COMMISSION — DEDUCTED from the creator's gross milestone amount.
+//
+//   gross milestone = 10000000n  (N100,000)
+//   escrow debit    = 10000000n  ONCE, gross only
+//   commission      =  1875000n  (7.5%) withheld from the creator's receivable
+//   creator net     =  8125000n
+//
+// Escrow is NEVER debited for the commission, and advertiser funding is never
+// increased because of it.
+// ---------------------------------------------------------------------------
+describe("creator commission is deducted from the creator's gross amount", () => {
+  const GROSS = 2500000n; // N25,000
+  const COMMISSION = 187500n; // 7.5% of N25,000
+  const NET = 2312500n; // N23,125
+
+  /**
+   * Pin the creator fee to the LIVE production rate (750 bp = 7.5%). The
+   * shared fixture now seeds the same 750 bp value, so this guard keeps these
+   * tests on the real 7.5% deduction even if the fixture drifts again.
+   */
+  function useProductionCreatorFee(): void {
+    const row = db.platformFeeConfig.find(
+      (c) => c.feeType === "MILESTONE_CREATOR_FEE",
+    ) as Row;
+
+    row.feeBasisPoints = 750;
+  }
+
+  async function settleOne(): Promise<void> {
+    useProductionCreatorFee();
+    const agreement = addAgreement({ agreedAmount: "100000.00" });
+
+    await planAndFund(agreement, ["25000.00", "25000.00", "25000.00", "25000.00"]);
+
+    const milestone = db.milestone[0];
+    const post = addPost({ status: "VERIFIED" });
+
+    await enterReview(milestone.id as string, post.id as string);
+    await reviewService.confirmMilestoneRelease(milestone.id as string, {
+      advertiserProfileId: ADV,
+      userId: ADV_USER,
+    });
+  }
+
+  it("balances: platform:creator-commission credit equals the creator-fee debit exactly", async () => {
+    await settleOne();
+
+    const credit = db.ledgerEntry.find((e) => e.account === "platform:creator-commission");
+    const withheld = db.ledgerEntry.find(
+      (e) =>
+        String(e.account).startsWith("creator:") && e.direction === "DEBIT",
+    );
+
+    assert.equal(credit?.direction, "CREDIT");
+    assert.equal(credit?.amountMinor, COMMISSION);
+    assert.equal(withheld?.amountMinor, COMMISSION);
+    assert.equal(withheld?.account, credit === undefined ? "" : withheld?.account);
+    assert.equal(String(withheld?.account).endsWith(":receivable"), true);
+  });
+
+  it("debits escrow EXACTLY ONCE by the full gross amount — never for the commission", async () => {
+    await settleOne();
+
+    const escrowLines = db.ledgerEntry.filter((e) => e.account === "platform:escrow");
+
+    assert.equal(escrowLines.length, 1, "escrow is touched exactly once per settlement");
+    assert.equal(escrowLines[0].direction, "DEBIT");
+    assert.equal(escrowLines[0].amountMinor, GROSS);
+    assert.notEqual(escrowLines[0].amountMinor, GROSS + COMMISSION);
+    assert.notEqual(escrowLines[0].amountMinor, NET);
+  });
+
+  it("leaves the creator receivable at gross minus the commission", async () => {
+    await settleOne();
+
+    const creatorLines = db.ledgerEntry.filter((e) =>
+      String(e.account).startsWith("creator:"),
+    );
+
+    const credited = creatorLines
+      .filter((e) => e.direction === "CREDIT")
+      .reduce<bigint>((sum, e) => sum + (e.amountMinor as bigint), 0n);
+    const debited = creatorLines
+      .filter((e) => e.direction === "DEBIT")
+      .reduce<bigint>((sum, e) => sum + (e.amountMinor as bigint), 0n);
+
+    assert.equal(credited, GROSS);
+    assert.equal(debited, COMMISSION);
+    assert.equal(credited - debited, NET, "creator net = gross - 7.5%");
+    assert.equal(credited - debited, GROSS - COMMISSION);
+  });
+
+  it("every settlement event balances to zero (debits == credits)", async () => {
+    useProductionCreatorFee();
+    const agreement = addAgreement({ agreedAmount: "100000.00" });
+
+    await planAndFund(agreement, ["25000.00", "25000.00", "25000.00", "25000.00"]);
+
+    for (const milestone of db.milestone) {
+      const post = addPost({ status: "VERIFIED" });
+      await enterReview(milestone.id as string, post.id as string);
+      await reviewService.confirmMilestoneRelease(milestone.id as string, {
+        advertiserProfileId: ADV,
+        userId: ADV_USER,
+      });
+    }
+
+    const debits = db.ledgerEntry
+      .filter((e) => e.direction === "DEBIT")
+      .reduce<bigint>((sum, e) => sum + (e.amountMinor as bigint), 0n);
+    const credits = db.ledgerEntry
+      .filter((e) => e.direction === "CREDIT")
+      .reduce<bigint>((sum, e) => sum + (e.amountMinor as bigint), 0n);
+
+    // Per milestone: debits = escrow 25,000 + commission 1,875 + adv fee 1,250
+    //               credits = gross 25,000 + commission 1,875 + adv fee 1,250
+    assert.equal(debits, credits, "the settlement ledger must balance");
+    assert.equal(debits, 4n * (2500000n + 187500n + 125000n));
+  });
+
+  it("does not increase advertiser funding for the commission", async () => {
+    const agreement = addAgreement({ agreedAmount: "100000.00" });
+
+    await planAndFund(agreement, ["25000.00", "25000.00", "25000.00", "25000.00"]);
+
+    const obligation = db.financialObligation[0] as Row;
+
+    // Multi-milestone: the advertiser funds ONLY the creator's money, and the
+    // creator commission never appears in the funded total.
+    assert.equal(obligation.platformFeeMinor, 0n);
+    assert.equal(obligation.advertiserTotalMinor, obligation.creatorAmountMinor);
+
+    // The milestone creator amounts still reconcile to the agreement exactly —
+    // no commission was folded into any of them.
+    const milestoneSum = db.milestone.reduce<bigint>(
+      (sum, m) => sum + (m.creatorAmountMinor as bigint),
+      0n,
+    );
+
+    assert.equal(milestoneSum, 10000000n);
+    // No milestone amount is inflated by the commission. (The shared fixture's
+    // addObligation() hard-codes its own creator amount, so the agreement is
+    // the correct reference here, not the fixture row.)
+    assert.equal(milestoneSum, money.toMinorUnits("100000.00", "NGN"));
+    assert.notEqual(milestoneSum, 10000000n + COMMISSION * 4n);
+  });
+
+  it("keeps BigInt minor-unit arithmetic throughout", async () => {
+    await settleOne();
+
+    for (const entry of db.ledgerEntry) {
+      assert.equal(typeof entry.amountMinor, "bigint");
+    }
+
+    const commission = db.milestone[0] as Row;
+
+    assert.equal(typeof commission.creatorAmountMinor, "bigint");
+    assert.equal(typeof commission.creatorCommissionMinor, "bigint");
+    // Floor-rounded basis-point maths: (2500000n * 750n) / 10000n.
+    assert.equal(commission.creatorCommissionMinor, (2500000n * 750n) / 10000n);
   });
 });

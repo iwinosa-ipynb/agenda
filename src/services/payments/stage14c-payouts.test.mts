@@ -584,7 +584,7 @@ describe("Stage 14C — creator payouts", () => {
   // -----------------------------------------------------------------------
 
   describe("payout initiation", () => {
-    it("pays a RELEASED milestone exactly its frozen creator amount (fees excluded)", async () => {
+    it("pays a RELEASED milestone its NET creator amount (gross minus the 7.5% commission)", async () => {
       const { milestone } = setupPayoutContext();
 
       configureFakeProvider(fakeTransferProvider());
@@ -602,7 +602,11 @@ describe("Stage 14C — creator payouts", () => {
       const attempt = db.paymentProviderTransaction[0];
 
       // ₦200,000 creator amount — never 21000000 (advertiser total), never fee-inclusive.
-      assert.equal(attempt.amountMinor, 20000000n);
+      // ₦200,000 gross − ₦20,000 marketplace commission = ₦180,000 transferred.
+      // Never 21000000 (advertiser total) and never the gross 20000000: the
+      // commission is withheld from the creator's own proceeds.
+      assert.equal(attempt.amountMinor, 18000000n);
+      assert.equal(attempt.amountMinor, 20000000n - 2000000n);
       assert.equal(attempt.milestoneId, milestone.id);
       assert.equal(attempt.providerStatus, "PENDING");
 

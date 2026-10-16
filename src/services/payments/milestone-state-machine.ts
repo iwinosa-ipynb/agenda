@@ -256,7 +256,7 @@ export function resolveReviewWindowView(input: {
 
 /**
  * True only for states in which the milestone's fees are EARNED. Agenda's
- * 5% advertiser service fee and 10% creator commission become earned ONLY
+ * 5% advertiser service fee and 7.5% creator commission become earned ONLY
  * when the corresponding milestone is completed/settled — future milestones
  * (PENDING and every pre-confirmation state) and validly-cancelled milestones
  * never generate Agenda revenue.

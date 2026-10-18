@@ -12,16 +12,6 @@ import {
 import type { UserRole } from "@/types";
 
 /**
- * TEMPORARY diagnostic marker — remove after the iPhone test.
- *
- * `@vercel/blob`'s client `upload()` does not expose the token-response
- * headers to its caller, so the uploader issues a tiny follow-up probe to
- * this same route and reads this header back to prove the server was
- * reached. It carries no secrets — just the literal string "reached".
- */
-const DIAG_HEADERS = { "x-diag-server": "reached" } as const;
-
-/**
  * Shared server-side engine for ALL Vercel Blob client-upload routes.
  *
  * One storage system, one security model — flows differ ONLY in which role
@@ -51,7 +41,7 @@ export async function handleImageUploadRequest(
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     return NextResponse.json(
       { error: "Image storage is not configured on this server." },
-      { status: 500, headers: DIAG_HEADERS },
+      { status: 500 },
     );
   }
 
@@ -62,7 +52,7 @@ export async function handleImageUploadRequest(
   } catch {
     return NextResponse.json(
       { error: "Invalid request." },
-      { status: 400, headers: DIAG_HEADERS },
+      { status: 400 },
     );
   }
 
@@ -94,11 +84,11 @@ export async function handleImageUploadRequest(
       onUploadCompleted: async () => {},
     });
 
-    return NextResponse.json(jsonResponse, { headers: DIAG_HEADERS });
+    return NextResponse.json(jsonResponse);
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Upload rejected." },
-      { status: 400, headers: DIAG_HEADERS },
+      { status: 400 },
     );
   }
 }
